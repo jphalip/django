@@ -8,7 +8,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.admin import widgets, helpers
 from django.contrib.admin.util import unquote, flatten_fieldsets, get_deleted_objects, model_format_dict
 from django.contrib.admin.templatetags.admin_static import static
-from django.contrib.admin.views.cbv import AdminChangeView
+from django.contrib.admin.views.cbv import AdminChangeView, AdminAddView, AdminDeleteView
 from django.contrib import messages
 from django.views.decorators.csrf import csrf_protect
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -923,93 +923,18 @@ class ModelAdmin(BaseModelAdmin):
     @csrf_protect_m
     @transaction.commit_on_success
     def add_view(self, request, form_url='', extra_context=None):
-        "The 'add' admin view for this model."
-        model = self.model
-        opts = model._meta
+        """
+        The 'add' admin view for this model.
+        """
+        return AdminAddView(
+            admin_opts=self, form_url=form_url,
+            extra_context=extra_context).dispatch(request)
 
-        if not self.has_add_permission(request):
-            raise PermissionDenied
-
-        ModelForm = self.get_form(request)
-        formsets = []
-        inline_instances = self.get_inline_instances(request)
-        if request.method == 'POST':
-            form = ModelForm(request.POST, request.FILES)
-            if form.is_valid():
-                new_object = self.save_form(request, form, change=False)
-                form_validated = True
-            else:
-                form_validated = False
-                new_object = self.model()
-            prefixes = {}
-            for FormSet, inline in zip(self.get_formsets(request), inline_instances):
-                prefix = FormSet.get_default_prefix()
-                prefixes[prefix] = prefixes.get(prefix, 0) + 1
-                if prefixes[prefix] != 1 or not prefix:
-                    prefix = "%s-%s" % (prefix, prefixes[prefix])
-                formset = FormSet(data=request.POST, files=request.FILES,
-                                  instance=new_object,
-                                  save_as_new="_saveasnew" in request.POST,
-                                  prefix=prefix, queryset=inline.queryset(request))
-                formsets.append(formset)
-            if all_valid(formsets) and form_validated:
-                self.save_model(request, new_object, form, False)
-                self.save_related(request, form, formsets, False)
-                self.log_addition(request, new_object)
-                return self.response_add(request, new_object)
-        else:
-            # Prepare the dict of initial data from the request.
-            # We have to special-case M2Ms as a list of comma-separated PKs.
-            initial = dict(request.GET.items())
-            for k in initial:
-                try:
-                    f = opts.get_field(k)
-                except models.FieldDoesNotExist:
-                    continue
-                if isinstance(f, models.ManyToManyField):
-                    initial[k] = initial[k].split(",")
-            form = ModelForm(initial=initial)
-            prefixes = {}
-            for FormSet, inline in zip(self.get_formsets(request), inline_instances):
-                prefix = FormSet.get_default_prefix()
-                prefixes[prefix] = prefixes.get(prefix, 0) + 1
-                if prefixes[prefix] != 1 or not prefix:
-                    prefix = "%s-%s" % (prefix, prefixes[prefix])
-                formset = FormSet(instance=self.model(), prefix=prefix,
-                                  queryset=inline.queryset(request))
-                formsets.append(formset)
-
-        adminForm = helpers.AdminForm(form, list(self.get_fieldsets(request)),
-            self.get_prepopulated_fields(request),
-            self.get_readonly_fields(request),
-            model_admin=self)
-        media = self.media + adminForm.media
-
-        inline_admin_formsets = []
-        for inline, formset in zip(inline_instances, formsets):
-            fieldsets = list(inline.get_fieldsets(request))
-            readonly = list(inline.get_readonly_fields(request))
-            prepopulated = dict(inline.get_prepopulated_fields(request))
-            inline_admin_formset = helpers.InlineAdminFormSet(inline, formset,
-                fieldsets, prepopulated, readonly, model_admin=self)
-            inline_admin_formsets.append(inline_admin_formset)
-            media = media + inline_admin_formset.media
-
-        context = {
-            'title': _('Add %s') % force_unicode(opts.verbose_name),
-            'adminform': adminForm,
-            'is_popup': "_popup" in request.REQUEST,
-            'show_delete': False,
-            'media': media,
-            'inline_admin_formsets': inline_admin_formsets,
-            'errors': helpers.AdminErrorList(form, formsets),
-            'app_label': opts.app_label,
-        }
-        context.update(extra_context or {})
-        return self.render_change_form(request, context, form_url=form_url, add=True)
 
     def change_view(self, request, object_id, form_url='', extra_context=None):
-        """The 'change' admin view for this model."""
+        """
+        The 'change' admin view for this model.
+        """
         return AdminChangeView(
             admin_opts=self, form_url=form_url, extra_context=extra_context,
             object_id=object_id).dispatch(request)
@@ -1166,68 +1091,11 @@ class ModelAdmin(BaseModelAdmin):
             'admin/change_list.html'
         ], context, current_app=self.admin_site.name)
 
-    @csrf_protect_m
-    @transaction.commit_on_success
     def delete_view(self, request, object_id, extra_context=None):
-        "The 'delete' admin view for this model."
-        opts = self.model._meta
-        app_label = opts.app_label
-
-        obj = self.get_object(request, unquote(object_id))
-
-        if not self.has_delete_permission(request, obj):
-            raise PermissionDenied
-
-        if obj is None:
-            raise Http404(_('%(name)s object with primary key %(key)r does not exist.') % {'name': force_unicode(opts.verbose_name), 'key': escape(object_id)})
-
-        using = router.db_for_write(self.model)
-
-        # Populate deleted_objects, a data structure of all related objects that
-        # will also be deleted.
-        (deleted_objects, perms_needed, protected) = get_deleted_objects(
-            [obj], opts, request.user, self.admin_site, using)
-
-        if request.POST: # The user has already confirmed the deletion.
-            if perms_needed:
-                raise PermissionDenied
-            obj_display = force_unicode(obj)
-            self.log_deletion(request, obj, obj_display)
-            self.delete_model(request, obj)
-
-            self.message_user(request, _('The %(name)s "%(obj)s" was deleted successfully.') % {'name': force_unicode(opts.verbose_name), 'obj': force_unicode(obj_display)})
-
-            if not self.has_change_permission(request, None):
-                return HttpResponseRedirect(reverse('admin:index',
-                                                    current_app=self.admin_site.name))
-            return HttpResponseRedirect(reverse('admin:%s_%s_changelist' %
-                                        (opts.app_label, opts.module_name),
-                                        current_app=self.admin_site.name))
-
-        object_name = force_unicode(opts.verbose_name)
-
-        if perms_needed or protected:
-            title = _("Cannot delete %(name)s") % {"name": object_name}
-        else:
-            title = _("Are you sure?")
-
-        context = {
-            "title": title,
-            "object_name": object_name,
-            "object": obj,
-            "deleted_objects": deleted_objects,
-            "perms_lacking": perms_needed,
-            "protected": protected,
-            "opts": opts,
-            "app_label": app_label,
-        }
-        context.update(extra_context or {})
-
-        return TemplateResponse(request, self.delete_confirmation_template or [
-            "admin/%s/%s/delete_confirmation.html" % (app_label, opts.object_name.lower()),
-            "admin/%s/delete_confirmation.html" % app_label,
-            "admin/delete_confirmation.html"
-        ], context, current_app=self.admin_site.name)
+        """The 'delete' admin view for this model."""
+        return AdminDeleteView(
+            admin_opts=self, extra_context=extra_context,
+            object_id=object_id).dispatch(request)
 
     def history_view(self, request, object_id, extra_context=None):
         "The 'history' admin view for this model."
