@@ -1,33 +1,31 @@
 from functools import update_wrapper, partial
 from django import forms
 from django.conf import settings
-from django.forms.formsets import all_valid
 from django.forms.models import (modelform_factory, modelformset_factory,
     inlineformset_factory, BaseInlineFormSet)
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.admin import widgets, helpers
-from django.contrib.admin.util import unquote, flatten_fieldsets, get_deleted_objects, model_format_dict
+from django.contrib.admin.util import unquote, flatten_fieldsets, model_format_dict
 from django.contrib.admin.templatetags.admin_static import static
-from django.contrib.admin.views.cbv import AdminChangeView, AdminAddView, AdminDeleteView
+from django.contrib.admin.views.cbv import AdminChangeView, AdminAddView, AdminDeleteView, ChangeListView
 from django.contrib import messages
 from django.views.decorators.csrf import csrf_protect
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.core.urlresolvers import reverse
-from django.db import models, transaction, router
+from django.db import models, transaction
 from django.db.models.related import RelatedObject
 from django.db.models.fields import BLANK_CHOICE_DASH, FieldDoesNotExist
 from django.db.models.sql.constants import LOOKUP_SEP, QUERY_TERMS
-from django.http import Http404, HttpResponse, HttpResponseRedirect
+from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
-from django.template.response import SimpleTemplateResponse, TemplateResponse
+from django.template.response import TemplateResponse
 from django.utils.decorators import method_decorator
 from django.utils.datastructures import SortedDict
 from django.utils.html import escape, escapejs
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst, get_text_list
 from django.utils.translation import ugettext as _
-from django.utils.translation import ungettext
 from django.utils.encoding import force_unicode
 
 HORIZONTAL, VERTICAL = 1, 2
@@ -944,152 +942,8 @@ class ModelAdmin(BaseModelAdmin):
         """
         The 'change list' admin view for this model.
         """
-        from django.contrib.admin.views.main import ERROR_FLAG
-        opts = self.model._meta
-        app_label = opts.app_label
-        if not self.has_change_permission(request, None):
-            raise PermissionDenied
-
-        list_display = self.get_list_display(request)
-        list_display_links = self.get_list_display_links(request, list_display)
-
-        # Check actions to see if any are available on this changelist
-        actions = self.get_actions(request)
-        if actions:
-            # Add the action checkboxes if there are any actions available.
-            list_display = ['action_checkbox'] +  list(list_display)
-
-        ChangeList = self.get_changelist(request)
-        try:
-            cl = ChangeList(request, self.model, list_display,
-                list_display_links, self.list_filter, self.date_hierarchy,
-                self.search_fields, self.list_select_related,
-                self.list_per_page, self.list_max_show_all, self.list_editable,
-                self)
-        except IncorrectLookupParameters:
-            # Wacky lookup parameters were given, so redirect to the main
-            # changelist page, without parameters, and pass an 'invalid=1'
-            # parameter via the query string. If wacky parameters were given
-            # and the 'invalid=1' parameter was already in the query string,
-            # something is screwed up with the database, so display an error
-            # page.
-            if ERROR_FLAG in request.GET.keys():
-                return SimpleTemplateResponse('admin/invalid_setup.html', {
-                    'title': _('Database error'),
-                })
-            return HttpResponseRedirect(request.path + '?' + ERROR_FLAG + '=1')
-
-        # If the request was POSTed, this might be a bulk action or a bulk
-        # edit. Try to look up an action or confirmation first, but if this
-        # isn't an action the POST will fall through to the bulk edit check,
-        # below.
-        action_failed = False
-        selected = request.POST.getlist(helpers.ACTION_CHECKBOX_NAME)
-
-        # Actions with no confirmation
-        if (actions and request.method == 'POST' and
-                'index' in request.POST and '_save' not in request.POST):
-            if selected:
-                response = self.response_action(request, queryset=cl.get_query_set(request))
-                if response:
-                    return response
-                else:
-                    action_failed = True
-            else:
-                msg = _("Items must be selected in order to perform "
-                        "actions on them. No items have been changed.")
-                self.message_user(request, msg)
-                action_failed = True
-
-        # Actions with confirmation
-        if (actions and request.method == 'POST' and
-                helpers.ACTION_CHECKBOX_NAME in request.POST and
-                'index' not in request.POST and '_save' not in request.POST):
-            if selected:
-                response = self.response_action(request, queryset=cl.get_query_set(request))
-                if response:
-                    return response
-                else:
-                    action_failed = True
-
-        # If we're allowing changelist editing, we need to construct a formset
-        # for the changelist given all the fields to be edited. Then we'll
-        # use the formset to validate/process POSTed data.
-        formset = cl.formset = None
-
-        # Handle POSTed bulk-edit data.
-        if (request.method == "POST" and cl.list_editable and
-                '_save' in request.POST and not action_failed):
-            FormSet = self.get_changelist_formset(request)
-            formset = cl.formset = FormSet(request.POST, request.FILES, queryset=cl.result_list)
-            if formset.is_valid():
-                changecount = 0
-                for form in formset.forms:
-                    if form.has_changed():
-                        obj = self.save_form(request, form, change=True)
-                        self.save_model(request, obj, form, change=True)
-                        self.save_related(request, form, formsets=[], change=True)
-                        change_msg = self.construct_change_message(request, form, None)
-                        self.log_change(request, obj, change_msg)
-                        changecount += 1
-
-                if changecount:
-                    if changecount == 1:
-                        name = force_unicode(opts.verbose_name)
-                    else:
-                        name = force_unicode(opts.verbose_name_plural)
-                    msg = ungettext("%(count)s %(name)s was changed successfully.",
-                                    "%(count)s %(name)s were changed successfully.",
-                                    changecount) % {'count': changecount,
-                                                    'name': name,
-                                                    'obj': force_unicode(obj)}
-                    self.message_user(request, msg)
-
-                return HttpResponseRedirect(request.get_full_path())
-
-        # Handle GET -- construct a formset for display.
-        elif cl.list_editable:
-            FormSet = self.get_changelist_formset(request)
-            formset = cl.formset = FormSet(queryset=cl.result_list)
-
-        # Build the list of media to be used by the formset.
-        if formset:
-            media = self.media + formset.media
-        else:
-            media = self.media
-
-        # Build the action form and populate it with available actions.
-        if actions:
-            action_form = self.action_form(auto_id=None)
-            action_form.fields['action'].choices = self.get_action_choices(request)
-        else:
-            action_form = None
-
-        selection_note_all = ungettext('%(total_count)s selected',
-            'All %(total_count)s selected', cl.result_count)
-
-        context = {
-            'module_name': force_unicode(opts.verbose_name_plural),
-            'selection_note': _('0 of %(cnt)s selected') % {'cnt': len(cl.result_list)},
-            'selection_note_all': selection_note_all % {'total_count': cl.result_count},
-            'title': cl.title,
-            'is_popup': cl.is_popup,
-            'cl': cl,
-            'media': media,
-            'has_add_permission': self.has_add_permission(request),
-            'app_label': app_label,
-            'action_form': action_form,
-            'actions_on_top': self.actions_on_top,
-            'actions_on_bottom': self.actions_on_bottom,
-            'actions_selection_counter': self.actions_selection_counter,
-        }
-        context.update(extra_context or {})
-
-        return TemplateResponse(request, self.change_list_template or [
-            'admin/%s/%s/change_list.html' % (app_label, opts.object_name.lower()),
-            'admin/%s/change_list.html' % app_label,
-            'admin/change_list.html'
-        ], context, current_app=self.admin_site.name)
+        return ChangeListView(
+            admin_opts=self, extra_context=extra_context).dispatch(request)
 
     def delete_view(self, request, object_id, extra_context=None):
         """The 'delete' admin view for this model."""

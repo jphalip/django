@@ -10,8 +10,6 @@ from django.utils.encoding import force_unicode, smart_str
 from django.utils.translation import ugettext, ugettext_lazy
 from django.utils.http import urlencode
 
-from django.contrib.admin import FieldListFilter
-from django.contrib.admin.options import IncorrectLookupParameters
 from django.contrib.admin.util import (quote, get_fields_from_path,
     lookup_needs_distinct, prepare_lookup_value)
 
@@ -79,6 +77,9 @@ class ChangeList(object):
         self.pk_attname = self.lookup_opts.pk.attname
 
     def get_filters(self, request):
+        from django.contrib.admin import FieldListFilter
+        from django.contrib.admin.options import IncorrectLookupParameters
+
         lookup_params = self.params.copy() # a dictionary of the query string
         use_distinct = False
 
@@ -160,6 +161,8 @@ class ChangeList(object):
         return '?%s' % urlencode(p)
 
     def get_results(self, request):
+        from django.contrib.admin.options import IncorrectLookupParameters
+
         paginator = self.model_admin.get_paginator(request, self.query_set, self.list_per_page)
         # Get the number of objects, with admin filters applied.
         result_count = paginator.count
@@ -297,6 +300,8 @@ class ChangeList(object):
         return ordering_fields
 
     def get_query_set(self, request):
+        from django.contrib.admin.options import IncorrectLookupParameters
+
         # First, we collect all the declared list filters.
         (self.filter_specs, self.has_filters, remaining_lookup_params,
          use_distinct) = self.get_filters(request)
