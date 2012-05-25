@@ -5,9 +5,10 @@ from django.forms.models import (modelform_factory, modelformset_factory,
     inlineformset_factory, BaseInlineFormSet)
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.admin import widgets, helpers
-from django.contrib.admin.util import unquote, flatten_fieldsets, model_format_dict
+from django.contrib.admin.util import flatten_fieldsets, model_format_dict
 from django.contrib.admin.templatetags.admin_static import static
-from django.contrib.admin.views.cbv import AdminChangeView, AdminAddView, AdminDeleteView, ChangeListView
+from django.contrib.admin.views.cbv import (AdminChangeView, AdminAddView,
+    AdminDeleteView, ChangeListView, HistoryView)
 from django.contrib import messages
 from django.views.decorators.csrf import csrf_protect
 from django.core.exceptions import ValidationError
@@ -18,7 +19,6 @@ from django.db.models.related import RelatedObject
 from django.db.models.fields import BLANK_CHOICE_DASH, FieldDoesNotExist
 from django.db.models.sql.constants import LOOKUP_SEP, QUERY_TERMS
 from django.http import HttpResponse, HttpResponseRedirect
-from django.shortcuts import get_object_or_404
 from django.template.response import TemplateResponse
 from django.utils.decorators import method_decorator
 from django.utils.datastructures import SortedDict
@@ -952,31 +952,12 @@ class ModelAdmin(BaseModelAdmin):
             object_id=object_id).dispatch(request)
 
     def history_view(self, request, object_id, extra_context=None):
-        "The 'history' admin view for this model."
-        from django.contrib.admin.models import LogEntry
-        model = self.model
-        opts = model._meta
-        app_label = opts.app_label
-        action_list = LogEntry.objects.filter(
-            object_id = object_id,
-            content_type__id__exact = ContentType.objects.get_for_model(model).id
-        ).select_related().order_by('action_time')
-        # If no history was found, see whether this object even exists.
-        obj = get_object_or_404(model, pk=unquote(object_id))
-        context = {
-            'title': _('Change history: %s') % force_unicode(obj),
-            'action_list': action_list,
-            'module_name': capfirst(force_unicode(opts.verbose_name_plural)),
-            'object': obj,
-            'app_label': app_label,
-            'opts': opts,
-        }
-        context.update(extra_context or {})
-        return TemplateResponse(request, self.object_history_template or [
-            "admin/%s/%s/object_history.html" % (app_label, opts.object_name.lower()),
-            "admin/%s/object_history.html" % app_label,
-            "admin/object_history.html"
-        ], context, current_app=self.admin_site.name)
+        """
+        The 'history' admin view for this model.
+        """
+        return HistoryView(
+            admin_opts=self, extra_context=extra_context,
+            object_id=object_id).dispatch(request)
 
 class InlineModelAdmin(BaseModelAdmin):
     """
