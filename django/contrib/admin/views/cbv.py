@@ -73,8 +73,6 @@ class HistoryView(AdminViewMixin, TemplateView):
 
 class ChangeListView(AdminViewMixin, TemplateView):
 
-    @csrf_protect_m
-    @transaction.commit_on_success
     def dispatch(self, request, *args, **kwargs):
         from django.contrib.admin.options import IncorrectLookupParameters
 
@@ -244,8 +242,6 @@ class ChangeListView(AdminViewMixin, TemplateView):
 
 class AdminDeleteView(AdminViewMixin, DeleteView):
 
-    @csrf_protect_m
-    @transaction.commit_on_success
     def dispatch(self, request, *args, **kwargs):
         return super(AdminDeleteView, self).dispatch(request, *args, **kwargs)
 
@@ -326,8 +322,6 @@ class AdminDeleteView(AdminViewMixin, DeleteView):
 
 class AdminAddView(AdminViewMixin, CreateView):
 
-    @csrf_protect_m
-    @transaction.commit_on_success
     def dispatch(self, request, *args, **kwargs):
         if not self.admin_opts.has_add_permission(request):
             raise PermissionDenied
@@ -448,8 +442,6 @@ class AdminAddView(AdminViewMixin, CreateView):
 
 class AdminChangeView(AdminViewMixin, UpdateView):
 
-    @csrf_protect_m
-    @transaction.commit_on_success
     def dispatch(self, request, *args, **kwargs):
         if request.method == 'POST' and "_saveasnew" in request.POST:
             return self.admin_opts.add_view(

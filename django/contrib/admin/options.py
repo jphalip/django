@@ -928,7 +928,8 @@ class ModelAdmin(BaseModelAdmin):
             admin_opts=self, form_url=form_url,
             extra_context=extra_context).dispatch(request)
 
-
+    @csrf_protect_m
+    @transaction.commit_on_success
     def change_view(self, request, object_id, form_url='', extra_context=None):
         """
         The 'change' admin view for this model.
@@ -945,6 +946,8 @@ class ModelAdmin(BaseModelAdmin):
         return ChangeListView(
             admin_opts=self, extra_context=extra_context).dispatch(request)
 
+    @csrf_protect_m
+    @transaction.commit_on_success
     def delete_view(self, request, object_id, extra_context=None):
         """The 'delete' admin view for this model."""
         return AdminDeleteView(
