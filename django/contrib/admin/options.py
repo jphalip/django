@@ -7,8 +7,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.admin import widgets, helpers
 from django.contrib.admin.util import flatten_fieldsets, model_format_dict
 from django.contrib.admin.templatetags.admin_static import static
-from django.contrib.admin.views.cbv import (AdminChangeView, AdminAddView,
-    AdminDeleteView, ChangeListView, HistoryView)
+from django.contrib.admin.views import (AdminChangeView, AdminAddView,
+    AdminDeleteView, AdminChangeListView, AdminHistoryView)
 from django.contrib import messages
 from django.views.decorators.csrf import csrf_protect
 from django.core.exceptions import ValidationError
@@ -461,7 +461,7 @@ class ModelAdmin(BaseModelAdmin):
         """
         Returns the ChangeList class for use on the changelist page.
         """
-        from django.contrib.admin.views.main import ChangeList
+        from django.contrib.admin.views.list import ChangeList
         return ChangeList
 
     def get_object(self, request, object_id, queryset=None):
@@ -570,7 +570,7 @@ class ModelAdmin(BaseModelAdmin):
         """
         # If self.actions is explicitally set to None that means that we don't
         # want *any* actions enabled on this page.
-        from django.contrib.admin.views.main import IS_POPUP_VAR
+        from django.contrib.admin.views.list import IS_POPUP_VAR
         if self.actions is None or IS_POPUP_VAR in request.GET:
             return SortedDict()
 
@@ -943,7 +943,7 @@ class ModelAdmin(BaseModelAdmin):
         """
         The 'change list' admin view for this model.
         """
-        return ChangeListView(
+        return AdminChangeListView(
             admin_opts=self, extra_context=extra_context).dispatch(request)
 
     @csrf_protect_m
@@ -958,7 +958,7 @@ class ModelAdmin(BaseModelAdmin):
         """
         The 'history' admin view for this model.
         """
-        return HistoryView(
+        return AdminHistoryView(
             admin_opts=self, extra_context=extra_context,
             object_id=object_id).dispatch(request)
 

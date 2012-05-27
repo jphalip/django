@@ -186,7 +186,7 @@ class RelatedFieldListFilter(FieldListFilter):
         return [self.lookup_kwarg, self.lookup_kwarg_isnull]
 
     def choices(self, cl):
-        from django.contrib.admin.views.main import EMPTY_CHANGELIST_VALUE
+        from django.contrib.admin.views.list import EMPTY_CHANGELIST_VALUE
         yield {
             'selected': self.lookup_val is None and not self.lookup_val_isnull,
             'query_string': cl.get_query_string({},
@@ -368,7 +368,7 @@ class AllValuesFieldListFilter(FieldListFilter):
         return [self.lookup_kwarg, self.lookup_kwarg_isnull]
 
     def choices(self, cl):
-        from django.contrib.admin.views.main import EMPTY_CHANGELIST_VALUE
+        from django.contrib.admin.views.list import EMPTY_CHANGELIST_VALUE
         yield {
             'selected': (self.lookup_val is None
                 and self.lookup_val_isnull is None),

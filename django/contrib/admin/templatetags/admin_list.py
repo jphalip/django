@@ -2,7 +2,7 @@ import datetime
 
 from django.contrib.admin.util import (lookup_field, display_for_field,
     display_for_value, label_for_field)
-from django.contrib.admin.views.main import (ALL_VAR, EMPTY_CHANGELIST_VALUE,
+from django.contrib.admin.views.list import (ALL_VAR, EMPTY_CHANGELIST_VALUE,
     ORDER_VAR, PAGE_VAR, SEARCH_VAR)
 from django.contrib.admin.templatetags.admin_static import static
 from django.core.exceptions import ObjectDoesNotExist
@@ -12,7 +12,7 @@ from django.utils.html import escape, conditional_escape
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
 from django.utils.translation import ugettext as _
-from django.utils.encoding import smart_unicode, force_unicode
+from django.utils.encoding import force_unicode
 from django.template import Library
 from django.template.loader import get_template
 from django.template.context import Context
