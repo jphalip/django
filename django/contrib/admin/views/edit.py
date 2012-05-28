@@ -12,6 +12,44 @@ from django.utils.html import escape
 from django.db import models, router
 
 
+class FormSetsMixin(object):
+    def construct_formsets(self, **kwargs):
+        """
+        Constructs the formsets taking care of any clashing prefixes.
+
+        It accepts kwargs for the FormSet instantiating and adds the POST and
+        FILES if available.
+        """
+
+        prefixes = {}
+        # Check if we have an instance or if we are creating a new one
+        object = getattr(self, 'object', None)
+
+        for FormSet, inline in zip(self.admin_opts.get_formsets(
+            self.request, object), self.inline_instances):
+
+            prefix = FormSet.get_default_prefix()
+            prefixes[prefix] = prefixes.get(prefix, 0) + 1
+            if prefixes[prefix] != 1 or not prefix:
+                prefix = "%s-%s" % (prefix, prefixes[prefix])
+
+            formset_kwargs = {
+                'prefix': prefix,
+                'queryset': inline.queryset(self.request),
+                'instance': object or self.model()
+            }
+
+            if self.request.method in ('POST', 'PUT'):
+                formset_kwargs.update({
+                    'data': self.request.POST,
+                    'files': self.request.FILES,
+                })
+
+            formset_kwargs.update(kwargs)
+
+            self.formsets.append(FormSet(**formset_kwargs))
+
+
 class AdminDeleteView(AdminViewMixin, DeleteView):
 
     def dispatch(self, request, *args, **kwargs):
@@ -92,7 +130,7 @@ class AdminDeleteView(AdminViewMixin, DeleteView):
             ]
 
 
-class AdminAddView(AdminViewMixin, CreateView):
+class AdminAddView(AdminViewMixin, FormSetsMixin, CreateView):
 
     def dispatch(self, request, *args, **kwargs):
         if not self.admin_opts.has_add_permission(request):
@@ -118,7 +156,7 @@ class AdminAddView(AdminViewMixin, CreateView):
 
     def form_valid(self, form):
         self.object = self.admin_opts.save_form(self.request, form, change=False)
-        self._post_form_validation()
+        self.construct_formsets(save_as_new="_saveasnew" in self.request.POST)
         if all_valid(self.formsets):
             self.admin_opts.save_model(self.request, self.object, form, False)
             self.admin_opts.save_related(self.request, form, self.formsets, False)
@@ -128,21 +166,8 @@ class AdminAddView(AdminViewMixin, CreateView):
 
     def form_invalid(self, form):
         self.object = self.model()
-        self._post_form_validation()
+        self.construct_formsets(save_as_new="_saveasnew" in self.request.POST)
         return self.render_to_response(self.get_context_data(form=form))
-
-    def _post_form_validation(self):
-        prefixes = {}
-        for FormSet, inline in zip(self.admin_opts.get_formsets(self.request), self.inline_instances):
-            prefix = FormSet.get_default_prefix()
-            prefixes[prefix] = prefixes.get(prefix, 0) + 1
-            if prefixes[prefix] != 1 or not prefix:
-                prefix = "%s-%s" % (prefix, prefixes[prefix])
-            formset = FormSet(data=self.request.POST, files=self.request.FILES,
-                              instance=self.object,
-                              save_as_new="_saveasnew" in self.request.POST,
-                              prefix=prefix, queryset=inline.queryset(self.request))
-            self.formsets.append(formset)
 
     def get_form_kwargs(self):
         kwargs = super(AdminAddView, self).get_form_kwargs()
@@ -166,15 +191,7 @@ class AdminAddView(AdminViewMixin, CreateView):
             form_url=self.form_url)
 
     def get(self, request, *args, **kwargs):
-        prefixes = {}
-        for FormSet, inline in zip(self.admin_opts.get_formsets(request), self.inline_instances):
-            prefix = FormSet.get_default_prefix()
-            prefixes[prefix] = prefixes.get(prefix, 0) + 1
-            if prefixes[prefix] != 1 or not prefix:
-                prefix = "%s-%s" % (prefix, prefixes[prefix])
-            formset = FormSet(instance=self.model(), prefix=prefix,
-                              queryset=inline.queryset(request))
-            self.formsets.append(formset)
+        self.construct_formsets()
         return super(CreateView, self).get(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
@@ -211,8 +228,7 @@ class AdminAddView(AdminViewMixin, CreateView):
         return context
 
 
-
-class AdminChangeView(AdminViewMixin, UpdateView):
+class AdminChangeView(AdminViewMixin, FormSetsMixin, UpdateView):
 
     def dispatch(self, request, *args, **kwargs):
         if request.method == 'POST' and "_saveasnew" in request.POST:
@@ -241,15 +257,7 @@ class AdminChangeView(AdminViewMixin, UpdateView):
 
     def get(self, request, *args, **kwargs):
         self.object = self.get_object()
-        prefixes = {}
-        for FormSet, inline in zip(self.admin_opts.get_formsets(self.request, self.object), self.inline_instances):
-            prefix = FormSet.get_default_prefix()
-            prefixes[prefix] = prefixes.get(prefix, 0) + 1
-            if prefixes[prefix] != 1 or not prefix:
-                prefix = "%s-%s" % (prefix, prefixes[prefix])
-            formset = FormSet(instance=self.object, prefix=prefix,
-                              queryset=inline.queryset(request))
-            self.formsets.append(formset)
+        self.construct_formsets()
         return super(UpdateView, self).get(request, *args, **kwargs)
 
     def get_object(self, queryset=None):
@@ -270,21 +278,9 @@ class AdminChangeView(AdminViewMixin, UpdateView):
             self.request, context, change=True, obj=self.object,
             form_url=self.form_url)
 
-    def _post_form_validation(self):
-        prefixes = {}
-        for FormSet, inline in zip(self.admin_opts.get_formsets(self.request, self.object), self.inline_instances):
-            prefix = FormSet.get_default_prefix()
-            prefixes[prefix] = prefixes.get(prefix, 0) + 1
-            if prefixes[prefix] != 1 or not prefix:
-                prefix = "%s-%s" % (prefix, prefixes[prefix])
-            formset = FormSet(self.request.POST, self.request.FILES,
-                              instance=self.object, prefix=prefix,
-                              queryset=inline.queryset(self.request))
-            self.formsets.append(formset)
-
     def form_valid(self, form):
         self.object = self.admin_opts.save_form(self.request, form, change=True)
-        self._post_form_validation()
+        self.construct_formsets()
         if all_valid(self.formsets):
             self.admin_opts.save_model(self.request, self.object, form, True)
             self.admin_opts.save_related(self.request, form, self.formsets, True)
@@ -294,7 +290,7 @@ class AdminChangeView(AdminViewMixin, UpdateView):
         return self.render_to_response(self.get_context_data(form=form))
 
     def form_invalid(self, form):
-        self._post_form_validation()
+        self.construct_formsets()
         return self.render_to_response(self.get_context_data(form=form))
 
     def get_context_data(self, **kwargs):
