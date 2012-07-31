@@ -3,8 +3,8 @@ import pickle
 import unittest
 
 from django.http import (QueryDict, HttpResponse, CompatCookie, BadHeaderError,
-        parse_cookie)
-
+        parse_cookie, HttpResponseRedirect, HttpResponsePermanentRedirect)
+from django.core.exceptions import SuspiciousOperation
 
 class QueryDictTests(unittest.TestCase):
     def test_missing_key(self):
@@ -232,6 +232,19 @@ class HttpResponseTests(unittest.TestCase):
         r = HttpResponse()
         self.assertRaises(BadHeaderError, r.__setitem__, 'test\rstr', 'test')
         self.assertRaises(BadHeaderError, r.__setitem__, 'test\nstr', 'test')
+
+    def test_unsafe_redirect(self):
+        bad_urls = [
+            'data:text/html,<script>window.alert("xss")</script>',
+            'mailto:test@example.com',
+            'file:///etc/passwd',
+        ]
+        for url in bad_urls:
+            self.assertRaises(SuspiciousOperation,
+                              HttpResponseRedirect, url)
+            self.assertRaises(SuspiciousOperation,
+                              HttpResponsePermanentRedirect, url)
+
 
 class CookieTests(unittest.TestCase):
     def test_encode(self):
