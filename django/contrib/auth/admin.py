@@ -153,7 +153,7 @@ class UserAdmin(admin.ModelAdmin):
             'admin/auth/user/change_password.html',
             context, current_app=self.admin_site.name)
 
-    def response_add(self, request, obj, post_url_continue='../%s/'):
+    def response_add(self, request, obj, post_url_continue=None):
         """
         Determines the HttpResponse for the add_view stage. It mostly defers to
         its superclass implementation but is customized because the User model

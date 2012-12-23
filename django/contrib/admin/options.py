@@ -1,5 +1,7 @@
 import copy
 from functools import update_wrapper, partial
+import warnings
+
 from django import forms
 from django.conf import settings
 from django.forms.formsets import all_valid
@@ -785,7 +787,7 @@ class ModelAdmin(BaseModelAdmin):
             "admin/change_form.html"
         ], context, current_app=self.admin_site.name)
 
-    def response_add(self, request, obj, post_url_continue='../%s/'):
+    def response_add(self, request, obj, post_url_continue=None):
         """
         Determines the HttpResponse for the add_view stage.
         """
@@ -797,9 +799,24 @@ class ModelAdmin(BaseModelAdmin):
         # the presence of keys in request.POST.
         if "_continue" in request.POST:
             self.message_user(request, msg + ' ' + _("You may edit it again below."))
+            if post_url_continue is None:
+                post_url_continue = reverse('admin:%s_%s_change' %
+                                            (opts.app_label, opts.module_name),
+                                            args=(pk_value,),
+                                            current_app=self.admin_site.name)
+            else:
+                try:
+                    post_url_continue = post_url_continue % pk_value
+                    warnings.warn(
+                        "The use of string formats for post_url_continue "
+                        "in ModelAdmin.response_add() is deprecated. Provide "
+                        "a pre-formatted url instead.",
+                        DeprecationWarning, stacklevel=2)
+                except TypeError:
+                    pass
             if "_popup" in request.POST:
                 post_url_continue += "?_popup=1"
-            return HttpResponseRedirect(post_url_continue % pk_value)
+            return HttpResponseRedirect(post_url_continue)
 
         if "_popup" in request.POST:
             return HttpResponse(

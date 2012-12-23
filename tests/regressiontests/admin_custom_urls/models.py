@@ -1,7 +1,9 @@
 from functools import update_wrapper
 
 from django.contrib import admin
+from django.core.urlresolvers import reverse
 from django.db import models
+from django.http import HttpResponseRedirect
 from django.utils.encoding import python_2_unicode_compatible
 
 
@@ -49,4 +51,27 @@ class ActionAdmin(admin.ModelAdmin):
         ) + self.remove_url(view_name)
 
 
+class Car(models.Model):
+    name = models.CharField(max_length=20)
+
+class CarAdmin(admin.ModelAdmin):
+
+    def response_add(self, request, obj, post_url_continue=None):
+        return super(CarAdmin, self).response_add(
+            request, obj, post_url_continue=reverse('admin:admin_custom_urls_car_history', args=[obj.pk]))
+
+
+class CarDeprecated(models.Model):
+    """ This class must be removed in Django 1.6 """
+    name = models.CharField(max_length=20)
+
+class CarDeprecatedAdmin(admin.ModelAdmin):
+    """ This class must be removed in Django 1.6 """
+    def response_add(self, request, obj, post_url_continue=None):
+        return super(CarDeprecatedAdmin, self).response_add(
+            request, obj, post_url_continue='../%s/history/')
+
+
 admin.site.register(Action, ActionAdmin)
+admin.site.register(Car, CarAdmin)
+admin.site.register(CarDeprecated, CarDeprecatedAdmin)
