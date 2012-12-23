@@ -51,6 +51,16 @@ class ActionAdmin(admin.ModelAdmin):
         ) + self.remove_url(view_name)
 
 
+class Person(models.Model):
+    name = models.CharField(max_length=20)
+
+class PersonAdmin(admin.ModelAdmin):
+
+    def response_post_save(self, request, obj):
+        return HttpResponseRedirect(
+            reverse('admin:admin_custom_urls_person_history', args=[obj.pk]))
+
+
 class Car(models.Model):
     name = models.CharField(max_length=20)
 
@@ -73,5 +83,6 @@ class CarDeprecatedAdmin(admin.ModelAdmin):
 
 
 admin.site.register(Action, ActionAdmin)
+admin.site.register(Person, PersonAdmin)
 admin.site.register(Car, CarAdmin)
 admin.site.register(CarDeprecated, CarDeprecatedAdmin)

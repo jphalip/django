@@ -829,18 +829,7 @@ class ModelAdmin(BaseModelAdmin):
             return HttpResponseRedirect(request.path)
         else:
             self.message_user(request, msg)
-
-            # Figure out where to redirect. If the user has change permission,
-            # redirect to the change-list page for this object. Otherwise,
-            # redirect to the admin index.
-            if self.has_change_permission(request, None):
-                post_url = reverse('admin:%s_%s_changelist' %
-                                   (opts.app_label, opts.module_name),
-                                   current_app=self.admin_site.name)
-            else:
-                post_url = reverse('admin:index',
-                                   current_app=self.admin_site.name)
-            return HttpResponseRedirect(post_url)
+            return self.response_post_save(request, obj)
 
     def response_change(self, request, obj):
         """
@@ -880,17 +869,28 @@ class ModelAdmin(BaseModelAdmin):
                                         current_app=self.admin_site.name))
         else:
             self.message_user(request, msg)
-            # Figure out where to redirect. If the user has change permission,
-            # redirect to the change-list page for this object. Otherwise,
-            # redirect to the admin index.
-            if self.has_change_permission(request, None):
-                post_url = reverse('admin:%s_%s_changelist' %
-                                   (opts.app_label, module_name),
-                                   current_app=self.admin_site.name)
-            else:
-                post_url = reverse('admin:index',
-                                   current_app=self.admin_site.name)
-            return HttpResponseRedirect(post_url)
+            return self.response_post_save(request, obj)
+
+    def response_post_save(self, request, obj):
+        """
+        Figure out where to redirect after the 'Save' button has been pressed.
+        If the user has change permission, redirect to the change-list page for
+        this object. Otherwise, redirect to the admin index.
+        """
+        opts = obj._meta
+        if obj._deferred:
+            opts_ = opts.proxy_for_model._meta
+            module_name = opts_.module_name
+        else:
+            module_name = opts.module_name
+        if self.has_change_permission(request, None):
+            post_url = reverse('admin:%s_%s_changelist' %
+                               (opts.app_label, module_name),
+                               current_app=self.admin_site.name)
+        else:
+            post_url = reverse('admin:index',
+                               current_app=self.admin_site.name)
+        return HttpResponseRedirect(post_url)
 
     def response_action(self, request, queryset):
         """
