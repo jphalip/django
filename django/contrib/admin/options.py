@@ -38,6 +38,7 @@ HORIZONTAL, VERTICAL = 1, 2
 # returns the <ul> class for a given radio_admin field
 get_ul_class = lambda x: 'radiolist%s' % ((x == HORIZONTAL) and ' inline' or '')
 
+
 class IncorrectLookupParameters(Exception):
     pass
 
@@ -61,6 +62,7 @@ FORMFIELD_FOR_DBFIELD_DEFAULTS = {
 }
 
 csrf_protect_m = method_decorator(csrf_protect)
+
 
 class BaseModelAdmin(six.with_metaclass(forms.MediaDefiningClass)):
     """Functionality common to both ModelAdmin and InlineAdmin."""
@@ -150,7 +152,7 @@ class BaseModelAdmin(six.with_metaclass(forms.MediaDefiningClass)):
                 })
             if 'choices' not in kwargs:
                 kwargs['choices'] = db_field.get_choices(
-                    include_blank = db_field.blank,
+                    include_blank=db_field.blank,
                     blank_choice=[('', _('None'))]
                 )
         return db_field.formfield(**kwargs)
@@ -835,20 +837,11 @@ class ModelAdmin(BaseModelAdmin):
         """
         Determines the HttpResponse for the change_view stage.
         """
-        opts = obj._meta
-
-        # Handle proxy models automatically created by .only() or .defer().
-        # Refs #14529
-        verbose_name = opts.verbose_name
-        module_name = opts.module_name
-        if obj._deferred:
-            opts_ = opts.proxy_for_model._meta
-            verbose_name = opts_.verbose_name
-            module_name = opts_.module_name
+        opts = self.model._meta
 
         pk_value = obj._get_pk_val()
 
-        msg = _('The %(name)s "%(obj)s" was changed successfully.') % {'name': force_text(verbose_name), 'obj': force_text(obj)}
+        msg = _('The %(name)s "%(obj)s" was changed successfully.') % {'name': force_text(opts.verbose_name), 'obj': force_text(obj)}
         if "_continue" in request.POST:
             self.message_user(request, msg + ' ' + _("You may edit it again below."))
             if "_popup" in request.REQUEST:
@@ -856,16 +849,16 @@ class ModelAdmin(BaseModelAdmin):
             else:
                 return HttpResponseRedirect(request.path)
         elif "_saveasnew" in request.POST:
-            msg = _('The %(name)s "%(obj)s" was added successfully. You may edit it again below.') % {'name': force_text(verbose_name), 'obj': obj}
+            msg = _('The %(name)s "%(obj)s" was added successfully. You may edit it again below.') % {'name': force_text(opts.verbose_name), 'obj': obj}
             self.message_user(request, msg)
             return HttpResponseRedirect(reverse('admin:%s_%s_change' %
-                                        (opts.app_label, module_name),
+                                        (opts.app_label, opts.module_name),
                                         args=(pk_value,),
                                         current_app=self.admin_site.name))
         elif "_addanother" in request.POST:
-            self.message_user(request, msg + ' ' + (_("You may add another %s below.") % force_text(verbose_name)))
+            self.message_user(request, msg + ' ' + (_("You may add another %s below.") % force_text(opts.verbose_name)))
             return HttpResponseRedirect(reverse('admin:%s_%s_add' %
-                                        (opts.app_label, module_name),
+                                        (opts.app_label, opts.module_name),
                                         current_app=self.admin_site.name))
         else:
             self.message_user(request, msg)
@@ -877,15 +870,10 @@ class ModelAdmin(BaseModelAdmin):
         If the user has change permission, redirect to the change-list page for
         this object. Otherwise, redirect to the admin index.
         """
-        opts = obj._meta
-        if obj._deferred:
-            opts_ = opts.proxy_for_model._meta
-            module_name = opts_.module_name
-        else:
-            module_name = opts.module_name
+        opts = self.model._meta
         if self.has_change_permission(request, None):
             post_url = reverse('admin:%s_%s_changelist' %
-                               (opts.app_label, module_name),
+                               (opts.app_label, opts.module_name),
                                current_app=self.admin_site.name)
         else:
             post_url = reverse('admin:index',
