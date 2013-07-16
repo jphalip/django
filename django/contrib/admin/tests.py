@@ -1,4 +1,8 @@
+import base64
+import httplib
+import json
 import os
+import sys
 from unittest import SkipTest
 
 from django.test import LiveServerTestCase
@@ -17,22 +21,51 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
     ]
     webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
-    @classmethod
-    def setUpClass(cls):
+    def setUp(self):
         if not os.environ.get('DJANGO_SELENIUM_TESTS', False):
             raise SkipTest('Selenium tests not requested')
         try:
-            cls.selenium = import_by_path(cls.webdriver_class)()
+            webdriver_class = import_by_path(self.webdriver_class)
         except Exception as e:
             raise SkipTest('Selenium webdriver "%s" not installed or not '
-                           'operational: %s' % (cls.webdriver_class, str(e)))
-        super(AdminSeleniumWebDriverTestCase, cls).setUpClass()
+                           'operational: %s' % (self.webdriver_class, str(e)))
 
-    @classmethod
-    def tearDownClass(cls):
-        if hasattr(cls, 'selenium'):
-            cls.selenium.quit()
-        super(AdminSeleniumWebDriverTestCase, cls).tearDownClass()
+        from selenium.webdriver import Remote
+        if webdriver_class is Remote:
+            if not (os.environ.get('REMOTE_USER') and os.environ.get('REMOTE_KEY')):
+                raise self.failureException('Both REMOTE_USER and REMOTE_KEY environment variables are required for remote tests.')
+            capabilities = self.remote_capabilities.copy()
+            capabilities['name'] = self.id()
+            auth = '%(REMOTE_USER)s:%(REMOTE_KEY)s' % os.environ
+            hub = os.environ.get('REMOTE_HUB', 'ondemand.saucelabs.com:80')
+            self.selenium = Remote(
+                command_executor='http://%s@%s/wd/hub' % (auth, hub),
+                desired_capabilities=capabilities)
+        else:
+            self.selenium = webdriver_class()
+
+        super(AdminSeleniumWebDriverTestCase, self).setUp()
+
+    def tearDown(self):
+        if hasattr(self, 'selenium'):
+            from selenium.webdriver import Remote
+            if isinstance(self.selenium, Remote):
+                self._report_sauce_pass_fail()
+            self.selenium.quit()
+        super(AdminSeleniumWebDriverTestCase, self).tearDown()
+
+    def _report_sauce_pass_fail(self):
+        # Sauce Labs has no way of knowing if the test passed or failed, so we
+        # let it know.
+        base64string = base64.encodestring(
+            '%s:%s' % (os.environ.get('REMOTE_USER'), os.environ.get('REMOTE_KEY')))[:-1]
+        result = json.dumps({'passed': sys.exc_info() == (None, None, None)})
+        url = '/rest/v1/%s/jobs/%s' % (os.environ.get('REMOTE_USER'), self.selenium.session_id)
+        connection = httplib.HTTPConnection('saucelabs.com')
+        connection.request(
+            'PUT', url, result, headers={"Authorization": 'Basic %s' % base64string})
+        result = connection.getresponse()
+        return result.status == 200
 
     def wait_until(self, callback, timeout=10):
         """

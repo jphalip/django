@@ -597,6 +597,15 @@ class DateTimePickerShortcutsSeleniumChromeTests(DateTimePickerShortcutsSelenium
 class DateTimePickerShortcutsSeleniumIETests(DateTimePickerShortcutsSeleniumFirefoxTests):
     webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'
 
+class DateTimePickerShortcutsSeleniumRemoteTests(DateTimePickerShortcutsSeleniumFirefoxTests):
+    webdriver_class = 'selenium.webdriver.remote.webdriver.WebDriver'
+    remote_capabilities = {
+        "browserName": "internet explorer",
+        "version": "8",
+        "platform": "WINDOWS",
+        "javascriptEnabled": True,
+    }
+
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 class HorizontalVerticalFilterSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
@@ -830,6 +839,15 @@ class HorizontalVerticalFilterSeleniumChromeTests(HorizontalVerticalFilterSeleni
 
 class HorizontalVerticalFilterSeleniumIETests(HorizontalVerticalFilterSeleniumFirefoxTests):
     webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'
+
+class HorizontalVerticalFilterSeleniumRemoteTests(HorizontalVerticalFilterSeleniumFirefoxTests):
+    webdriver_class = 'selenium.webdriver.remote.webdriver.WebDriver'
+    remote_capabilities = {
+        "browserName": "internet explorer",
+        "version": "8",
+        "platform": "WINDOWS",
+        "javascriptEnabled": True,
+    }
 
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
