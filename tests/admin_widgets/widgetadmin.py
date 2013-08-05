@@ -20,6 +20,8 @@ class CarTireAdmin(admin.ModelAdmin):
 class EventAdmin(admin.ModelAdmin):
     raw_id_fields = ['main_band', 'supporting_bands']
 
+class TokenFieldEventAdmin(admin.ModelAdmin):
+    token_fields = ['main_band', 'supporting_bands']
 
 class SchoolAdmin(admin.ModelAdmin):
     filter_vertical = ('students',)
@@ -34,6 +36,7 @@ site.register(models.CarTire, CarTireAdmin)
 site.register(models.Member)
 site.register(models.Band)
 site.register(models.Event, EventAdmin)
+site.register(models.TokenFieldEvent, TokenFieldEventAdmin)
 site.register(models.Album)
 
 site.register(models.Inventory)

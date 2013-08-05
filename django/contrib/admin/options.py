@@ -3,6 +3,7 @@ import copy
 import operator
 from functools import partial, reduce, update_wrapper
 import warnings
+import json
 
 from django import forms
 from django.conf import settings
@@ -27,7 +28,7 @@ from django.forms.formsets import all_valid, DELETION_FIELD_NAME
 from django.forms.models import (modelform_factory, modelformset_factory,
     inlineformset_factory, BaseInlineFormSet, modelform_defines_fields)
 from django.http import Http404, HttpResponseRedirect
-from django.http.response import HttpResponseBase
+from django.http.response import HttpResponseBase, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.template.response import SimpleTemplateResponse, TemplateResponse
 from django.utils.decorators import method_decorator
@@ -86,6 +87,7 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
     """Functionality common to both ModelAdmin and InlineAdmin."""
 
     raw_id_fields = ()
+    token_fields = ()
     fields = None
     exclude = None
     fieldsets = None
@@ -144,7 +146,8 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
             # extra HTML -- the "add other" interface -- to the end of the
             # rendered output. formfield can be None if it came from a
             # OneToOneField with parent_link=True or a M2M intermediary.
-            if formfield and db_field.name not in self.raw_id_fields:
+            if (formfield and db_field.name not in self.raw_id_fields
+                and db_field.name not in self.token_fields):
                 related_modeladmin = self.admin_site._registry.get(
                                                             db_field.rel.to)
                 can_add_related = bool(related_modeladmin and
@@ -201,9 +204,10 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
         Get a form Field for a ForeignKey.
         """
         db = kwargs.get('using')
-        if db_field.name in self.raw_id_fields:
-            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.rel,
-                                    self.admin_site, using=db)
+        if db_field.name in self.token_fields:
+            kwargs['widget'] = widgets.ForeignKeyTokenWidget(db_field.rel, self.admin_site)
+        elif db_field.name in self.raw_id_fields:
+            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.rel, self.admin_site, using=db)
         elif db_field.name in self.radio_fields:
             kwargs['widget'] = widgets.AdminRadioSelect(attrs={
                 'class': get_ul_class(self.radio_fields[db_field.name]),
@@ -226,9 +230,10 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
             return None
         db = kwargs.get('using')
 
-        if db_field.name in self.raw_id_fields:
-            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.rel,
-                                    self.admin_site, using=db)
+        if db_field.name in self.token_fields:
+            kwargs['widget'] = widgets.ManyToManyTokenWidget(db_field.rel, self.admin_site)
+        elif db_field.name in self.raw_id_fields:
+            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.rel, self.admin_site, using=db)
             kwargs['help_text'] = ''
         elif db_field.name in (list(self.filter_vertical) + list(self.filter_horizontal)):
             kwargs['widget'] = widgets.FilteredSelectMultiple(db_field.verbose_name, (db_field.name in self.filter_vertical))
@@ -469,6 +474,9 @@ class ModelAdmin(BaseModelAdmin):
             url(r'^$',
                 wrap(self.changelist_view),
                 name='%s_%s_changelist' % info),
+            url(r'^objects-by-ids/(?P<field_name>\w+)/(?P<ids>[\d,]+)/$',
+                wrap(self.objects_by_ids_view),
+                name='%s_%s_objects_by_ids' % info),
             url(r'^add/$',
                 wrap(self.add_view),
                 name='%s_%s_add' % info),
@@ -493,9 +501,9 @@ class ModelAdmin(BaseModelAdmin):
         extra = '' if settings.DEBUG else '.min'
         js = [
             'core.js',
-            'admin/RelatedObjectLookups.js',
             'jquery%s.js' % extra,
-            'jquery.init.js'
+            'jquery.init.js',
+            'admin/RelatedObjectLookups.js',
         ]
         if self.actions is not None:
             js.append('actions%s.js' % extra)
@@ -1507,6 +1515,37 @@ class ModelAdmin(BaseModelAdmin):
             "admin/%s/delete_confirmation.html" % app_label,
             "admin/delete_confirmation.html"
         ], context, current_app=self.admin_site.name)
+
+    def get_token(self, request, obj, field_name):
+        """
+        Returns the representation of the given object to be displayed in a
+        token when using a token_field.
+        """
+        return str(obj)
+
+    def objects_by_ids_view(self, request, field_name, ids):
+        """
+        Returns some JSON containing the requested objects' representations to
+        be displayed in a token_field.
+        """
+        # TODO: extend to support non-integer/non-`id` PKs
+        if not field_name in self.token_fields:
+            raise Http404
+        try:
+            ids = map(int, ids.split(','))
+        except ValueError:
+            if ids == '':
+                ids = []
+            else:
+                raise Http404
+        target_model_admin = self.admin_site._registry.get(
+            self.model._meta.get_field(field_name).rel.to)
+        response_data = {}
+        if target_model_admin and target_model_admin.has_change_permission(request):
+            for obj in target_model_admin.get_queryset(request).filter(id__in=ids):
+                response_data[obj.pk] = self.get_token(request, obj, field_name)
+        return HttpResponse(
+            json.dumps(response_data), content_type='application/json')
 
     def history_view(self, request, object_id, extra_context=None):
         "The 'history' admin view for this model."

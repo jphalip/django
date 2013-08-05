@@ -64,6 +64,15 @@ class Event(models.Model):
     link = models.URLField(blank=True)
     min_age = models.IntegerField(blank=True, null=True)
 
+
+class TokenFieldEvent(models.Model):
+    """
+    A model that has token fields in the admin.
+    """
+    main_band = models.ForeignKey(Band, related_name='token_field_events_main_band_at')
+    supporting_bands = models.ManyToManyField(Band, null=True, blank=True, related_name='token_field_events_supporting_band_at')
+
+
 @python_2_unicode_compatible
 class Car(models.Model):
     owner = models.ForeignKey(User)

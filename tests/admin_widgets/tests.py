@@ -916,3 +916,138 @@ class AdminRawIdWidgetSeleniumChromeTests(AdminRawIdWidgetSeleniumFirefoxTests):
 
 class AdminRawIdWidgetSeleniumIETests(AdminRawIdWidgetSeleniumFirefoxTests):
     webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'
+
+
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+class AdminTokenWidgetSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
+    available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
+    fixtures = ['admin-widgets-users.xml']
+    urls = "admin_widgets.urls"
+    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
+
+    def setUp(self):
+        models.Band.objects.create(id=42, name='Bogey Blues')
+        models.Band.objects.create(id=98, name='Green Potatoes')
+        super(AdminTokenWidgetSeleniumFirefoxTests, self).setUp()
+
+    def test_foreignkey(self):
+        self.admin_login(username='super', password='secret', login_url='/')
+        self.selenium.get(
+            '%s%s' % (self.live_server_url, '/admin_widgets/tokenfieldevent/add/'))
+        main_window = self.selenium.current_window_handle
+
+        # The field is hidden and no value has been selected yet
+        self.assertFalse(self.selenium.find_element_by_id('id_main_band').is_displayed())
+        tokens = self.selenium.find_elements_by_css_selector('.field-main_band ul.tokens li')
+        self.assertEqual(len(tokens), 0)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_main_band').get_attribute('value'),
+            '')
+
+        # Open the popup window and click on a band
+        self.selenium.find_element_by_id('lookup_id_main_band').click()
+        self.selenium.switch_to_window('id_main_band')
+        link = self.selenium.find_element_by_link_text('Bogey Blues')
+        self.assertTrue('/band/42/' in link.get_attribute('href'))
+        link.click()
+
+        # The field now contains the selected band's id
+        self.selenium.switch_to_window(main_window)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_main_band').get_attribute('value'),
+            '42')
+        tokens = self.selenium.find_elements_by_css_selector('.field-main_band ul.tokens li')
+        self.assertEqual(len(tokens), 1)
+        self.assertTrue('Bogey Blues' in tokens[0].text)
+
+        # Reopen the popup window and click on another band
+        self.selenium.find_element_by_id('lookup_id_main_band').click()
+        self.selenium.switch_to_window('id_main_band')
+        link = self.selenium.find_element_by_link_text('Green Potatoes')
+        self.assertTrue('/band/98/' in link.get_attribute('href'))
+        link.click()
+
+        # The field now contains the other selected band's id
+        self.selenium.switch_to_window(main_window)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_main_band').get_attribute('value'),
+            '98')
+        tokens = self.selenium.find_elements_by_css_selector('.field-main_band ul.tokens li')
+        self.assertEqual(len(tokens), 1)
+        self.assertTrue('Green Potatoes' in tokens[0].text)
+
+        # Click the 'Remove' button to clear the value
+        tokens[0].find_element_by_tag_name('a').click()
+        import selenium.webdriver.support.ui as ui
+        wait = ui.WebDriverWait(self.selenium, 10)
+        wait.until(lambda driver: len(driver.find_elements_by_css_selector('.field-main_band ul.tokens li')) == 0)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_main_band').get_attribute('value'),
+            '')
+        tokens = self.selenium.find_elements_by_css_selector('.field-main_band ul.tokens li')
+        self.assertEqual(len(tokens), 0)
+
+    def test_many_to_many(self):
+        self.admin_login(username='super', password='secret', login_url='/')
+        self.selenium.get(
+            '%s%s' % (self.live_server_url, '/admin_widgets/tokenfieldevent/add/'))
+        main_window = self.selenium.current_window_handle
+
+        # The field is hidden and no value has been selected yet
+        self.assertFalse(self.selenium.find_element_by_id('id_supporting_bands').is_displayed())
+        tokens = self.selenium.find_elements_by_css_selector('.field-supporting_bands ul.tokens li')
+        self.assertEqual(len(tokens), 0)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_supporting_bands').get_attribute('value'),
+            '')
+
+        # Open the popup window and click on a band
+        self.selenium.find_element_by_id('lookup_id_supporting_bands').click()
+        self.selenium.switch_to_window('id_supporting_bands')
+        link = self.selenium.find_element_by_link_text('Bogey Blues')
+        self.assertTrue('/band/42/' in link.get_attribute('href'))
+        link.click()
+
+        # The field now contains the selected band's id
+        self.selenium.switch_to_window(main_window)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_supporting_bands').get_attribute('value'),
+            '42')
+        tokens = self.selenium.find_elements_by_css_selector('.field-supporting_bands ul.tokens li')
+        self.assertEqual(len(tokens), 1)
+        self.assertTrue('Bogey Blues' in tokens[0].text)
+
+        # Reopen the popup window and click on another band
+        self.selenium.find_element_by_id('lookup_id_supporting_bands').click()
+        self.selenium.switch_to_window('id_supporting_bands')
+        link = self.selenium.find_element_by_link_text('Green Potatoes')
+        self.assertTrue('/band/98/' in link.get_attribute('href'))
+        link.click()
+
+        # The field now contains the two selected bands' ids
+        self.selenium.switch_to_window(main_window)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_supporting_bands').get_attribute('value'),
+            '42,98')
+        tokens = self.selenium.find_elements_by_css_selector('.field-supporting_bands ul.tokens li')
+        self.assertEqual(len(tokens), 2)
+        self.assertTrue('Bogey Blues' in tokens[0].text)
+        self.assertTrue('Green Potatoes' in tokens[1].text)
+
+        # Click a 'Remove' button to remove one of the tokens
+        tokens[0].find_element_by_tag_name('a').click()
+        import selenium.webdriver.support.ui as ui
+        wait = ui.WebDriverWait(self.selenium, 10)
+        wait.until(lambda driver: len(driver.find_elements_by_css_selector('.field-supporting_bands ul.tokens li')) == 1)
+        self.assertEqual(
+            self.selenium.find_element_by_id('id_supporting_bands').get_attribute('value'),
+            '98')
+        tokens = self.selenium.find_elements_by_css_selector('.field-supporting_bands ul.tokens li')
+        self.assertEqual(len(tokens), 1)
+        self.assertTrue('Green Potatoes' in tokens[0].text)
+
+class AdminTokenWidgetSeleniumChromeTests(AdminTokenWidgetSeleniumFirefoxTests):
+    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
+
+class AdminTokenWidgetSeleniumIETests(AdminTokenWidgetSeleniumFirefoxTests):
+    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'

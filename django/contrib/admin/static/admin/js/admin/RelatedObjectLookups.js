@@ -13,7 +13,7 @@ function html_unescape(text) {
 
 // IE doesn't accept periods or dashes in the window name, but the element IDs
 // we use to generate popup window names may contain them, therefore we map them
-// to allowed characters in a reversible way so that we can locate the correct 
+// to allowed characters in a reversible way so that we can locate the correct
 // element when the popup window is dismissed.
 function id_to_windowname(text) {
     text = text.replace(/\./g, '__dot__');
@@ -48,6 +48,9 @@ function dismissRelatedLookupPopup(win, chosenId) {
         elem.value += ',' + chosenId;
     } else {
         document.getElementById(name).value = chosenId;
+    }
+    if (elem.className.indexOf('vTokenField') != -1) {
+        updateTokenField(elem);
     }
     win.close();
 }
@@ -86,6 +89,9 @@ function dismissAddAnotherPopup(win, newId, newRepr) {
             } else {
                 elem.value = newId;
             }
+            if (elem.className.indexOf('vTokenField') != -1) {
+                django.jQuery(elem).triggerHandler('change');
+            }
         }
     } else {
         var toId = name + "_to";
@@ -95,3 +101,52 @@ function dismissAddAnotherPopup(win, newId, newRepr) {
     }
     win.close();
 }
+
+
+var updateTokenField = function(field) {
+    var $ = django.jQuery;
+    var $field = $(field);
+    $field.hide();
+    var container = $field.closest('div');
+    var field_name = $field.attr('name');
+    var pks = encodeURI($field.val());
+    if (pks) {
+        var objects_url = '../objects-by-ids/' + field_name + '/' + pks + '/'; // FIXME: hard-coded url
+        $.get(objects_url, function(data){
+            var ul = $('.tokens', container);
+            ul.html('');
+            $.each(data, function(key, name) {
+                var li = $('<li data-token-id="' + key + '"></li>');
+                var removeLink = $('<a title="' + gettext('Remove') + '">' + gettext('Remove') + '</a>');
+                removeLink.click(function(){
+                    removeToken(this, field)}
+                );
+                li.text(name);
+                li.append(removeLink).appendTo(ul);
+            });
+        });
+    }
+};
+
+var removeToken = function(removeLink, field) {
+    var $ = django.jQuery;
+    var li = $(removeLink).parent();
+    var id_to_remove = $(li).data('token-id');
+    var values = $(field).val().split(',');
+    $(field).val(
+        $.grep(
+            values, function(id){ return id != id_to_remove }
+        ).join(',')
+    );
+    li.fadeOut(200, function() {
+        $(this).remove();
+    });
+};
+
+(function($){
+    $(document).ready(function(){
+        $('.vTokenField').each(function(index, field){
+            updateTokenField(field);
+        });
+    });
+})(django.jQuery);
