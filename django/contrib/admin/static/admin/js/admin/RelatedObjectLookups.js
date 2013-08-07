@@ -90,7 +90,7 @@ function dismissAddAnotherPopup(win, newId, newRepr) {
                 elem.value = newId;
             }
             if (elem.className.indexOf('vTokenField') != -1) {
-                django.jQuery(elem).triggerHandler('change');
+                updateTokenField(elem);
             }
         }
     } else {
