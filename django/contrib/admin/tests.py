@@ -19,14 +19,55 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
         'django.contrib.sessions',
         'django.contrib.sites',
     ]
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
+
+    def _get_remote_capabilities(self, env_id):
+        oses = {'s': 'Windows 2008',
+                'e': 'Windows 2012',
+                'x': 'Windows 2003',
+                'l': 'Linux',
+                'm': 'Mac 10.6',
+                'i': 'Mac 10.8'}
+        browsers = {"ff": "firefox",
+                    "op": "opera",
+                    "ie": "internet explorer",
+                    "sa": "safari",
+                    "ip": "ipad",
+                    "ih": "iphone",
+                    "an": "android",
+                    "gc": "chrome"}
+        browser = browsers[env_id[:2]]
+        if env_id[-1] in oses:
+            platform = oses.get(env_id[-1])
+            version = env_id[2:-1]
+        else:
+            platform = None
+            version = env_id[2:]
+        return {'browserName': browser,
+                'version': version,
+                'platform': platform,
+                }
+
+    def _get_local_webdriver_class(self, env_id):
+        browsers = {"ff": "selenium.webdriver.Firefox",
+                    "op": "selenium.webdriver.Opera",
+                    "ie": "selenium.webdriver.Ie",
+                    "gc": "selenium.webdriver.Chrome"}
+        if env_id[:2] in browsers:
+            return browsers[env_id[:2]]
+        raise SkipTest('Unsupported local browser, use Sauce mode')
 
     def setUp(self):
         if not os.environ.get('DJANGO_SELENIUM_TESTS', False):
             raise SkipTest('Selenium tests not requested')
         try:
-            webdriver_class = import_by_path(self.webdriver_class)
+            if os.environ.get('DJANGO_SELENIUM_REMOTE', False):
+                webdriver_class = import_by_path('selenium.webdriver.Remote')
+            else:
+                webdriver_class_string = self._get_local_webdriver_class(
+                    os.environ.get('DJANGO_SELENIUM_ENV'))
+                webdriver_class = import_by_path(webdriver_class_string)
         except Exception as e:
+            raise
             raise SkipTest('Selenium webdriver "%s" not installed or not '
                            'operational: %s' % (self.webdriver_class, str(e)))
 
@@ -34,7 +75,8 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
         if webdriver_class is Remote:
             if not (os.environ.get('REMOTE_USER') and os.environ.get('REMOTE_KEY')):
                 raise self.failureException('Both REMOTE_USER and REMOTE_KEY environment variables are required for remote tests.')
-            capabilities = self.remote_capabilities.copy()
+            capabilities = self._get_remote_capabilities(
+                os.environ.get('DJANGO_SELENIUM_ENV'))
             capabilities['name'] = self.id()
             auth = '%(REMOTE_USER)s:%(REMOTE_KEY)s' % os.environ
             hub = os.environ.get('REMOTE_HUB', 'ondemand.saucelabs.com:80')

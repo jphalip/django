@@ -342,6 +342,13 @@ if __name__ == "__main__":
         '--selenium', action='store_true', dest='selenium',
         default=False,
         help='Run the Selenium tests as well (if Selenium is installed)')
+    parser.add_option(
+        '--selenium-env', dest='selenium_env', default='ff',
+        help='The environment to run the Selenium tests on')
+    parser.add_option(
+        '--selenium-remote', action='store_true', dest='selenium_remote',
+        default=False,
+        help='Run the Selenium tests on a remote server (Sauce)')
     options, args = parser.parse_args()
     if options.settings:
         os.environ['DJANGO_SETTINGS_MODULE'] = options.settings
@@ -355,6 +362,10 @@ if __name__ == "__main__":
 
     if options.selenium:
         os.environ['DJANGO_SELENIUM_TESTS'] = '1'
+        os.environ['DJANGO_SELENIUM_ENV'] = options.selenium_env
+
+        if options.selenium_remote:
+            os.environ['DJANGO_SELENIUM_REMOTE'] = '1'
 
     if options.bisect:
         bisect_tests(options.bisect, options, args)
