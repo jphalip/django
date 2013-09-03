@@ -3344,7 +3344,7 @@ class PrePopulatedTest(TestCase):
 
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-class SeleniumAdminViewsFirefoxTests(AdminSeleniumWebDriverTestCase):
+class SeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_views'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-views-users.xml']
@@ -3511,14 +3511,6 @@ class SeleniumAdminViewsFirefoxTests(AdminSeleniumWebDriverTestCase):
             self.selenium.find_element_by_id('fieldsetcollapser0').text,
             "Hide"
         )
-
-
-class SeleniumAdminViewsChromeTests(SeleniumAdminViewsFirefoxTests):
-    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
-
-
-class SeleniumAdminViewsIETests(SeleniumAdminViewsFirefoxTests):
-    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'
 
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))

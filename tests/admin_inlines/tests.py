@@ -522,7 +522,7 @@ class TestInlinePermissions(TestCase):
 
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-class SeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
+class SeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_inlines'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-views-users.xml']
@@ -684,10 +684,3 @@ class SeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
             "%s.row1" % row_selector)), 2, msg="Expect two row1 styled rows")
         self.assertEqual(len(self.selenium.find_elements_by_css_selector(
             "%s.row2" % row_selector)), 1, msg="Expect one row2 styled row")
-
-
-class SeleniumChromeTests(SeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
-
-class SeleniumIETests(SeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'

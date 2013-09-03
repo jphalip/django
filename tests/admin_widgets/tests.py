@@ -483,7 +483,7 @@ class RelatedFieldWidgetWrapperTests(DjangoTestCase):
 
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-class DateTimePickerSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
+class DateTimePickerSeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
@@ -533,16 +533,10 @@ class DateTimePickerSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
         self.assertEqual(
             self.get_css_value('#clockbox0', 'display'), 'none')
 
-class DateTimePickerSeleniumChromeTests(DateTimePickerSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
-
-class DateTimePickerSeleniumIETests(DateTimePickerSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'
-
 
 @override_settings(TIME_ZONE='Asia/Singapore')
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-class DateTimePickerShortcutsSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
+class DateTimePickerShortcutsSeleniumTests(AdminSeleniumWebDriverTestCase):
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
     urls = "admin_widgets.urls"
@@ -591,24 +585,9 @@ class DateTimePickerShortcutsSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase
         self.assertGreater(member.birthdate, now - error_margin)
         self.assertLess(member.birthdate, now + error_margin)
 
-class DateTimePickerShortcutsSeleniumChromeTests(DateTimePickerShortcutsSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
-
-class DateTimePickerShortcutsSeleniumIETests(DateTimePickerShortcutsSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'
-
-class DateTimePickerShortcutsSeleniumRemoteTests(DateTimePickerShortcutsSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.remote.webdriver.WebDriver'
-    remote_capabilities = {
-        "browserName": "internet explorer",
-        "version": "8",
-        "platform": "WINDOWS",
-        "javascriptEnabled": True,
-    }
-
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-class HorizontalVerticalFilterSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
+class HorizontalVerticalFilterSeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
@@ -625,7 +604,7 @@ class HorizontalVerticalFilterSeleniumFirefoxTests(AdminSeleniumWebDriverTestCas
         self.cliff = models.Student.objects.create(name='Cliff')
         self.arthur = models.Student.objects.create(name='Arthur')
         self.school = models.School.objects.create(name='School of Awesome')
-        super(HorizontalVerticalFilterSeleniumFirefoxTests, self).setUp()
+        super(HorizontalVerticalFilterSeleniumTests, self).setUp()
 
     def assertActiveButtons(self, mode, field_name, choose, remove,
                              choose_all=None, remove_all=None):
@@ -834,24 +813,9 @@ class HorizontalVerticalFilterSeleniumFirefoxTests(AdminSeleniumWebDriverTestCas
         self.assertEqual(list(self.school.alumni.all()),
                          [self.jason, self.peter])
 
-class HorizontalVerticalFilterSeleniumChromeTests(HorizontalVerticalFilterSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
-
-class HorizontalVerticalFilterSeleniumIETests(HorizontalVerticalFilterSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'
-
-class HorizontalVerticalFilterSeleniumRemoteTests(HorizontalVerticalFilterSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.remote.webdriver.WebDriver'
-    remote_capabilities = {
-        "browserName": "internet explorer",
-        "version": "8",
-        "platform": "WINDOWS",
-        "javascriptEnabled": True,
-    }
-
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-class AdminRawIdWidgetSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
+class AdminRawIdWidgetSeleniumTests(AdminSeleniumWebDriverTestCase):
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
     urls = "admin_widgets.urls"
@@ -860,7 +824,7 @@ class AdminRawIdWidgetSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
     def setUp(self):
         models.Band.objects.create(id=42, name='Bogey Blues')
         models.Band.objects.create(id=98, name='Green Potatoes')
-        super(AdminRawIdWidgetSeleniumFirefoxTests, self).setUp()
+        super(AdminRawIdWidgetSeleniumTests, self).setUp()
 
     def test_foreignkey(self):
         self.admin_login(username='super', password='secret', login_url='/')
@@ -939,9 +903,3 @@ class AdminRawIdWidgetSeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
         self.assertEqual(
             self.selenium.find_element_by_id('id_supporting_bands').get_attribute('value'),
             '42,98')
-
-class AdminRawIdWidgetSeleniumChromeTests(AdminRawIdWidgetSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
-
-class AdminRawIdWidgetSeleniumIETests(AdminRawIdWidgetSeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'

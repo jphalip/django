@@ -339,12 +339,8 @@ if __name__ == "__main__":
              'LiveServerTestCase) is expected to run from. The default value '
              'is localhost:8081.')
     parser.add_option(
-        '--selenium', action='store_true', dest='selenium',
-        default=False,
-        help='Run the Selenium tests as well (if Selenium is installed)')
-    parser.add_option(
-        '--selenium-env', dest='selenium_env', default='ff',
-        help='The environment to run the Selenium tests on')
+        '--selenium', dest='selenium', default=None,
+        help='The browser specifications to run the Selenium tests with.')
     parser.add_option(
         '--selenium-remote', action='store_true', dest='selenium_remote',
         default=False,
@@ -361,8 +357,7 @@ if __name__ == "__main__":
         os.environ['DJANGO_LIVE_TEST_SERVER_ADDRESS'] = options.liveserver
 
     if options.selenium:
-        os.environ['DJANGO_SELENIUM_TESTS'] = '1'
-        os.environ['DJANGO_SELENIUM_ENV'] = options.selenium_env
+        os.environ['DJANGO_SELENIUM_SPECS'] = options.selenium
 
         if options.selenium_remote:
             os.environ['DJANGO_SELENIUM_REMOTE'] = '1'
