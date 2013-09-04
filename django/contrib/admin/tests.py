@@ -46,11 +46,17 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
         else:
             platform = None
             version = specs[2:]
-        return {
+        caps = {
             'browserName': browser,
             'version': version,
             'platform': platform,
+            'public': 'public',
         }
+        if 'BUILD_NUMBER' in os.environ:
+            caps['build'] = os.environ['BUILD_NUMBER']
+        elif 'TRAVIS_BUILD_NUMBER' in os.environ:
+            caps['build'] = os.environ['TRAVIS_BUILD_NUMBER']
+        return caps
 
     def _get_local_webdriver_class(self, specs):
         browsers = {
