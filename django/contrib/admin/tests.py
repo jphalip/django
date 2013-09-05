@@ -19,16 +19,18 @@ def browserize(cls):
     multiple_specs = os.environ.get('DJANGO_SELENIUM_SPECS', '').split(',')
     for name, func in list(cls.__dict__.items()):
         if name.startswith('test') and hasattr(func, '__call__'):
-            for spec in multiple_specs:
+            for i, spec in enumerate(multiple_specs):
                 test_name = getattr(spec, "__name__", "{0}_{1}".format(name, spec))
-                new_func = types.FunctionType(func.func_code,
-                                              func.func_globals,
-                                              test_name,
-                                              func.func_defaults,
-                                              func.func_closure)
-                new_func.spec = spec
-                setattr(cls, test_name, new_func)
-            delattr(cls, name)
+                if i:
+                    new_func = types.FunctionType(func.func_code,
+                                                  func.func_globals,
+                                                  test_name,
+                                                  func.func_defaults,
+                                                  func.func_closure)
+                    new_func.spec = spec
+                    setattr(cls, test_name, new_func)
+                else:
+                    func.spec = spec
     return cls
 
 
