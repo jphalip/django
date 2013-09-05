@@ -87,7 +87,7 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             "ie": "selenium.webdriver.Ie",
             "gc": "selenium.webdriver.Chrome"
         }
-        return import_by_path(browsers[specs])
+        return import_by_path(browsers[specs[:2]])
 
     def setUp(self):
         test_method = getattr(self, self._testMethodName)
