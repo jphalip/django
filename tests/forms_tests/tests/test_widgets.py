@@ -4,7 +4,7 @@ from __future__ import unicode_literals
 import copy
 import datetime
 
-from django.contrib.admin.tests import AdminSeleniumWebDriverTestCase
+from django.contrib.admin.tests import AdminSeleniumWebDriverTestCase, browserize
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.urlresolvers import reverse
 from django.forms import *
@@ -1051,6 +1051,7 @@ class WidgetTests(TestCase):
         self.assertFalse(form.is_valid())
 
 
+@browserize
 class LiveWidgetTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['forms_tests'] + AdminSeleniumWebDriverTestCase.available_apps
