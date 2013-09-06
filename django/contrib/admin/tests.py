@@ -3,11 +3,35 @@ import httplib
 import json
 import os
 import sys
+import types
 from unittest import SkipTest
 
 from django.test import LiveServerTestCase
 from django.utils.module_loading import import_by_path
 from django.utils.translation import ugettext as _
+
+
+def browserize(cls):
+    """Class decorator for dynamically generating test methods for running
+       Selenium tests across multiple browsers without much boilerplate.
+       This is required for all subclasses of AdminSeleniumWebDriverTestCase.
+    """
+    multiple_specs = os.environ.get('DJANGO_SELENIUM_SPECS', '').split(',')
+    for name, func in list(cls.__dict__.items()):
+        if name.startswith('test') and hasattr(func, '__call__'):
+            for i, spec in enumerate(multiple_specs):
+                test_name = getattr(spec, "__name__", "{0}_{1}".format(name, spec))
+                if i:
+                    new_func = types.FunctionType(func.func_code,
+                                                  func.func_globals,
+                                                  test_name,
+                                                  func.func_defaults,
+                                                  func.func_closure)
+                    new_func.spec = spec
+                    setattr(cls, test_name, new_func)
+                else:
+                    func.spec = spec
+    return cls
 
 
 class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
@@ -65,13 +89,16 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             "ie": "selenium.webdriver.Ie",
             "gc": "selenium.webdriver.Chrome"
         }
-        return import_by_path(browsers[specs])
+        return import_by_path(browsers[specs[:2]])
 
     def setUp(self):
-        selenium_specs = os.environ.get('DJANGO_SELENIUM_SPECS', False)
-        if not selenium_specs:
+        test_method = getattr(self, self._testMethodName)
+        if not hasattr(test_method, 'spec'):
+            raise SkipTest('Please make sure your test class is decorated with @browserize')
+        elif not test_method.spec:
             raise SkipTest('Selenium tests not requested')
         try:
+            selenium_specs = test_method.spec
             if os.environ.get('DJANGO_SELENIUM_REMOTE', False):
                 webdriver_class = import_by_path('selenium.webdriver.Remote')
             else:
