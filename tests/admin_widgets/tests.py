@@ -8,7 +8,7 @@ from django import forms
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.admin import widgets
-from django.contrib.admin.tests import AdminSeleniumWebDriverTestCase, browserize
+from django.contrib.admin.tests import AdminSeleniumWebDriverTestCase
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.models import CharField, DateField
@@ -481,15 +481,12 @@ class RelatedFieldWidgetWrapperTests(DjangoTestCase):
         self.assertFalse(w.can_add_related)
 
 
-
-@browserize
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 class DateTimePickerSeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
     urls = "admin_widgets.urls"
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
     def test_show_hide_date_time_picker_widgets(self):
         """
@@ -535,14 +532,12 @@ class DateTimePickerSeleniumTests(AdminSeleniumWebDriverTestCase):
             self.get_css_value('#clockbox0', 'display'), 'none')
 
 
-@browserize
 @override_settings(TIME_ZONE='Asia/Singapore')
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 class DateTimePickerShortcutsSeleniumTests(AdminSeleniumWebDriverTestCase):
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
     urls = "admin_widgets.urls"
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
     def test_date_time_picker_shortcuts(self):
         """
@@ -588,14 +583,12 @@ class DateTimePickerShortcutsSeleniumTests(AdminSeleniumWebDriverTestCase):
         self.assertLess(member.birthdate, now + error_margin)
 
 
-@browserize
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 class HorizontalVerticalFilterSeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
     urls = "admin_widgets.urls"
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
     def setUp(self):
         self.lisa = models.Student.objects.create(name='Lisa')
@@ -817,13 +810,11 @@ class HorizontalVerticalFilterSeleniumTests(AdminSeleniumWebDriverTestCase):
                          [self.jason, self.peter])
 
 
-@browserize
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 class AdminRawIdWidgetSeleniumTests(AdminSeleniumWebDriverTestCase):
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
     urls = "admin_widgets.urls"
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
     def setUp(self):
         models.Band.objects.create(id=42, name='Bogey Blues')

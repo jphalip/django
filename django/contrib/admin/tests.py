@@ -5,41 +5,40 @@ import os
 import sys
 import types
 from unittest import SkipTest
-import inspect
 
 from django.test import LiveServerTestCase
 from django.utils.module_loading import import_by_path
 from django.utils.translation import ugettext as _
 
 
-def is_test_method(obj):
-    return inspect.ismethod(obj) and obj.__name__.startswith('test')
-
-def browserize(cls):
-    """Class decorator for dynamically generating test methods for running
-       Selenium tests across multiple browsers without much boilerplate.
-       This is required for all subclasses of AdminSeleniumWebDriverTestCase.
-    """
-    all_specs = os.environ.get('DJANGO_SELENIUM_SPECS', '').split(',')
-    if not all_specs:
-        return cls
-    for name, method in inspect.getmembers(cls, is_test_method):
-        for index, spec in enumerate(all_specs):
-            new_method_name = '%s_%s' % (name, spec)
-            if index > 0:
-                new_method = types.MethodType(method.func_code,
-                                              method.func_globals,
-                                              new_method_name,
-                                              method.func_defaults,
-                                              method.func_closure)
-                setattr(new_method.__func__, 'browser_spec', spec)
-                setattr(cls, new_method_name, new_method)
-            else:
-                setattr(method.__func__, 'browser_spec', spec)
-    return cls
+class AdminSeleniumMetaClass(type):
+    def __new__(cls, name, bases, dct):
+        """
+        Dynamically injects new methods for running tests in different browsers
+        when multiple browser specs are provided (e.g. --selenium=ff,gc).
+        """
+        all_specs = os.environ.get('DJANGO_SELENIUM_SPECS', '').split(',')
+        if all_specs:
+            for key, value in dct.items():
+                if isinstance(value, types.FunctionType) and key.startswith('test'):
+                    func = value
+                    for index, spec in enumerate(all_specs):
+                        new_func_name = '%s__%s' % (key, spec)
+                        if index > 0:
+                            new_func = types.FunctionType(func.func_code,
+                                                          func.func_globals,
+                                                          new_func_name,
+                                                          func.func_defaults,
+                                                          func.func_closure)
+                            setattr(new_func, 'browser_spec', spec)
+                            dct[new_func_name] = new_func
+                        else:
+                            setattr(func, 'browser_spec', spec)
+        return type.__new__(cls, name, bases, dct)
 
 
 class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
+    __metaclass__ = AdminSeleniumMetaClass
 
     available_apps = [
         'django.contrib.admin',

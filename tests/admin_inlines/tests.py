@@ -1,6 +1,6 @@
 from __future__ import unicode_literals
 
-from django.contrib.admin.tests import AdminSeleniumWebDriverTestCase, browserize
+from django.contrib.admin.tests import AdminSeleniumWebDriverTestCase
 from django.contrib.admin.helpers import InlineAdminForm
 from django.contrib.auth.models import User, Permission
 from django.contrib.contenttypes.models import ContentType
@@ -521,14 +521,12 @@ class TestInlinePermissions(TestCase):
         self.assertContains(response, 'id="id_inner2_set-0-DELETE"')
 
 
-@browserize
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
 class SeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_inlines'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-views-users.xml']
     urls = "admin_inlines.urls"
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
     def test_add_stackeds(self):
         """
