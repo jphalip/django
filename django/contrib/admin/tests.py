@@ -5,32 +5,37 @@ import os
 import sys
 import types
 from unittest import SkipTest
+import inspect
 
 from django.test import LiveServerTestCase
 from django.utils.module_loading import import_by_path
 from django.utils.translation import ugettext as _
 
 
+def is_test_method(obj):
+    return inspect.ismethod(obj) and obj.__name__.startswith('test')
+
 def browserize(cls):
     """Class decorator for dynamically generating test methods for running
        Selenium tests across multiple browsers without much boilerplate.
        This is required for all subclasses of AdminSeleniumWebDriverTestCase.
     """
-    multiple_specs = os.environ.get('DJANGO_SELENIUM_SPECS', '').split(',')
-    for name, func in list(cls.__dict__.items()):
-        if name.startswith('test') and hasattr(func, '__call__'):
-            for i, spec in enumerate(multiple_specs):
-                test_name = getattr(spec, "__name__", "{0}_{1}".format(name, spec))
-                if i:
-                    new_func = types.FunctionType(func.func_code,
-                                                  func.func_globals,
-                                                  test_name,
-                                                  func.func_defaults,
-                                                  func.func_closure)
-                    new_func.spec = spec
-                    setattr(cls, test_name, new_func)
-                else:
-                    func.spec = spec
+    all_specs = os.environ.get('DJANGO_SELENIUM_SPECS', '').split(',')
+    if not all_specs:
+        return cls
+    for name, method in inspect.getmembers(cls, is_test_method):
+        for index, spec in enumerate(all_specs):
+            new_method_name = '%s_%s' % (name, spec)
+            if index > 0:
+                new_method = types.MethodType(method.func_code,
+                                              method.func_globals,
+                                              new_method_name,
+                                              method.func_defaults,
+                                              method.func_closure)
+                setattr(new_method.__func__, 'browser_spec', spec)
+                setattr(cls, new_method_name, new_method)
+            else:
+                setattr(method.__func__, 'browser_spec', spec)
     return cls
 
 
@@ -76,44 +81,46 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             'platform': platform,
             'public': 'public',
         }
-        if 'BUILD_NUMBER' in os.environ:
+        if 'BUILD_NUMBER' in os.environ:  # For Jenkins integration
             caps['build'] = os.environ['BUILD_NUMBER']
-        elif 'TRAVIS_BUILD_NUMBER' in os.environ:
+        elif 'TRAVIS_BUILD_NUMBER' in os.environ:  # For Travis integration
             caps['build'] = os.environ['TRAVIS_BUILD_NUMBER']
         return caps
 
     def _get_local_webdriver_class(self, specs):
         browsers = {
-            "ff": "selenium.webdriver.Firefox",
-            "op": "selenium.webdriver.Opera",
-            "ie": "selenium.webdriver.Ie",
-            "gc": "selenium.webdriver.Chrome"
+            'ff': 'selenium.webdriver.Firefox',
+            'op': 'selenium.webdriver.Opera',
+            'ie': 'selenium.webdriver.Ie',
+            'gc': 'selenium.webdriver.Chrome',
+            'pj': 'selenium.webdriver.PhantomJS',
         }
         return import_by_path(browsers[specs[:2]])
 
     def setUp(self):
         test_method = getattr(self, self._testMethodName)
-        if not hasattr(test_method, 'spec'):
-            raise SkipTest('Please make sure your test class is decorated with @browserize')
-        elif not test_method.spec:
+        if not os.environ.get('DJANGO_SELENIUM_SPECS', ''):
             raise SkipTest('Selenium tests not requested')
+        elif not hasattr(test_method, 'browser_spec'):
+            raise SkipTest('Please make sure your test class is decorated with @browserize')
+
+        browser_spec = test_method.browser_spec
         try:
-            selenium_specs = test_method.spec
             if os.environ.get('DJANGO_SELENIUM_REMOTE', False):
                 webdriver_class = import_by_path('selenium.webdriver.Remote')
             else:
-                webdriver_class = self._get_local_webdriver_class(selenium_specs)
+                webdriver_class = self._get_local_webdriver_class(browser_spec)
         except Exception as e:
             raise SkipTest(
                 'Selenium specifications "%s" not valid or '
                 'corresponding WebDriver not installed: %s'
-                % (selenium_specs, str(e)))
+                % (browser_spec, str(e)))
 
         from selenium.webdriver import Remote
         if webdriver_class is Remote:
             if not (os.environ.get('REMOTE_USER') and os.environ.get('REMOTE_KEY')):
                 raise self.failureException('Both REMOTE_USER and REMOTE_KEY environment variables are required for remote tests.')
-            capabilities = self._get_remote_capabilities(selenium_specs)
+            capabilities = self._get_remote_capabilities(browser_spec)
             capabilities['name'] = self.id()
             auth = '%(REMOTE_USER)s:%(REMOTE_KEY)s' % os.environ
             hub = os.environ.get('REMOTE_HUB', 'ondemand.saucelabs.com:80')
