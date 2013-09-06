@@ -12,14 +12,14 @@ from django.utils.translation import ugettext as _
 
 
 class AdminSeleniumMetaClass(type):
-    def __new__(cls, name, bases, dct):
+    def __new__(cls, name, bases, attrs):
         """
         Dynamically injects new methods for running tests in different browsers
         when multiple browser specs are provided (e.g. --selenium=ff,gc).
         """
         all_specs = os.environ.get('DJANGO_SELENIUM_SPECS', '').split(',')
         if all_specs:
-            for key, value in dct.items():
+            for key, value in attrs.items():
                 if isinstance(value, types.FunctionType) and key.startswith('test'):
                     func = value
                     for index, spec in enumerate(all_specs):
@@ -31,10 +31,10 @@ class AdminSeleniumMetaClass(type):
                                                           func.func_defaults,
                                                           func.func_closure)
                             setattr(new_func, 'browser_spec', spec)
-                            dct[new_func_name] = new_func
+                            attrs[new_func_name] = new_func
                         else:
                             setattr(func, 'browser_spec', spec)
-        return type.__new__(cls, name, bases, dct)
+        return type.__new__(cls, name, bases, attrs)
 
 
 class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
@@ -48,7 +48,11 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
         'django.contrib.sites',
     ]
 
-    def _get_remote_capabilities(self, specs):
+    def _get_remote_capabilities(self, spec):
+        """
+        Returns the capabilities for the remote webdriver as specified in the
+        given browser spec.
+        """
         platforms = {
             's': 'Windows 2008',
             'x': 'Windows 2003',
@@ -67,13 +71,13 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             'an': 'android',
             'gc': 'chrome'
         }
-        browser = browsers[specs[:2]]
-        if specs[-1] in platforms:
-            platform = platforms.get(specs[-1])
-            version = specs[2:-1]
+        browser = browsers[spec[:2]]
+        if spec[-1] in platforms:
+            platform = platforms.get(spec[-1])
+            version = spec[2:-1]
         else:
             platform = None
-            version = specs[2:]
+            version = spec[2:]
         caps = {
             'browserName': browser,
             'version': version,
@@ -86,7 +90,11 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             caps['build'] = os.environ['TRAVIS_BUILD_NUMBER']
         return caps
 
-    def _get_local_webdriver_class(self, specs):
+    def _get_local_webdriver_class(self, spec):
+        """
+        Returns the webdriver for a local browser corresponding to the given
+        browser spec.
+        """
         browsers = {
             'ff': 'selenium.webdriver.Firefox',
             'op': 'selenium.webdriver.Opera',
@@ -94,7 +102,7 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             'gc': 'selenium.webdriver.Chrome',
             'pj': 'selenium.webdriver.PhantomJS',
         }
-        return import_by_path(browsers[specs[:2]])
+        return import_by_path(browsers[spec[:2]])
 
     def setUp(self):
         test_method = getattr(self, self._testMethodName)
@@ -104,21 +112,23 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             raise SkipTest('Please make sure your test class is decorated with @browserize')
 
         browser_spec = test_method.browser_spec
-        try:
-            if os.environ.get('DJANGO_SELENIUM_REMOTE', False):
-                webdriver_class = import_by_path('selenium.webdriver.Remote')
-            else:
-                webdriver_class = self._get_local_webdriver_class(browser_spec)
-        except Exception as e:
-            raise SkipTest(
-                'Selenium specifications "%s" not valid or '
-                'corresponding WebDriver not installed: %s'
-                % (browser_spec, str(e)))
 
-        from selenium.webdriver import Remote
-        if webdriver_class is Remote:
+        # Testing locally
+        if not os.environ.get('DJANGO_SELENIUM_REMOTE', False):
+            try:
+                self.selenium = self._get_local_webdriver_class(browser_spec)()
+            except Exception as e:
+                raise SkipTest(
+                    'Selenium specifications "%s" not valid or '
+                    'corresponding WebDriver not installed: %s'
+                    % (browser_spec, str(e)))
+
+        # Testing remotely
+        else:
             if not (os.environ.get('REMOTE_USER') and os.environ.get('REMOTE_KEY')):
                 raise self.failureException('Both REMOTE_USER and REMOTE_KEY environment variables are required for remote tests.')
+
+            from selenium.webdriver import Remote
             capabilities = self._get_remote_capabilities(browser_spec)
             capabilities['name'] = self.id()
             auth = '%(REMOTE_USER)s:%(REMOTE_KEY)s' % os.environ
@@ -126,8 +136,6 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             self.selenium = Remote(
                 command_executor='http://%s@%s/wd/hub' % (auth, hub),
                 desired_capabilities=capabilities)
-        else:
-            self.selenium = webdriver_class()
 
         super(AdminSeleniumWebDriverTestCase, self).setUp()
 
