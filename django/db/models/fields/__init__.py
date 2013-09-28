@@ -114,8 +114,8 @@ class Field(object):
         self.default = default
         self.editable = editable
         self.serialize = serialize
-        self.unique_for_date, self.unique_for_month = (unique_for_date,
-                                                       unique_for_month)
+        self.unique_for_date = unique_for_date
+        self.unique_for_month = unique_for_month
         self.unique_for_year = unique_for_year
         self._choices = choices or []
         self.help_text = help_text
@@ -368,12 +368,35 @@ class Field(object):
         # mapped to one of the built-in Django field types. In this case, you
         # can implement db_type() instead of get_internal_type() to specify
         # exactly which wacky database column type you want to use.
+        params = self.db_parameters(connection)
+        if params['type']:
+            if params['check']:
+                return "%s CHECK (%s)" % (params['type'], params['check'])
+            else:
+                return params['type']
+        return None
+
+    def db_parameters(self, connection):
+        """
+        Replacement for db_type, providing a range of different return
+        values (type, checks)
+        """
         data = DictWrapper(self.__dict__, connection.ops.quote_name, "qn_")
         try:
-            return (connection.creation.data_types[self.get_internal_type()]
-                    % data)
+            type_string = connection.creation.data_types[self.get_internal_type()] % data
         except KeyError:
-            return None
+            type_string = None
+        try:
+            check_string = connection.creation.data_type_check_constraints[self.get_internal_type()] % data
+        except KeyError:
+            check_string = None
+        return {
+            "type": type_string,
+            "check": check_string,
+        }
+
+    def db_type_suffix(self, connection):
+        return connection.creation.data_types_suffix.get(self.get_internal_type())
 
     @property
     def unique(self):
@@ -479,6 +502,7 @@ class Field(object):
         """
         if not prepared:
             value = self.get_prep_lookup(lookup_type, value)
+            prepared = True
         if hasattr(value, 'get_compiler'):
             value = value.get_compiler(connection=connection)
         if hasattr(value, 'as_sql') or hasattr(value, '_as_sql'):
@@ -615,7 +639,7 @@ class Field(object):
     def save_form_data(self, instance, data):
         setattr(instance, self.name, data)
 
-    def formfield(self, form_class=None, **kwargs):
+    def formfield(self, form_class=None, choices_form_class=None, **kwargs):
         """
         Returns a django.forms.Field instance for this database Field.
         """
@@ -636,7 +660,9 @@ class Field(object):
             defaults['coerce'] = self.to_python
             if self.null:
                 defaults['empty_value'] = None
-            if form_class is None or not issubclass(form_class, forms.TypedChoiceField):
+            if choices_form_class is not None:
+                form_class = choices_form_class
+            else:
                 form_class = forms.TypedChoiceField
             # Many of the subclass-specific formfield arguments (min_value,
             # max_value) don't apply for choice fields, so be sure to only pass
@@ -1096,14 +1122,14 @@ class DecimalField(Field):
         Formats a number into a string with the requisite number of digits and
         decimal places.
         """
-        # Method moved to django.db.backends.util.
+        # Method moved to django.db.backends.utils.
         #
         # It is preserved because it is used by the oracle backend
         # (django.db.backends.oracle.query), and also for
         # backwards-compatibility with any external code which may have used
         # this method.
-        from django.db.backends import util
-        return util.format_number(value, self.max_digits, self.decimal_places)
+        from django.db.backends import utils
+        return utils.format_number(value, self.max_digits, self.decimal_places)
 
     def get_db_prep_save(self, value, connection):
         return connection.ops.value_to_db_decimal(self.to_python(value),
@@ -1286,6 +1312,8 @@ class IPAddressField(Field):
     description = _("IPv4 address")
 
     def __init__(self, *args, **kwargs):
+        warnings.warn("IPAddressField has been deprecated. Use GenericIPAddressField instead.",
+                      PendingDeprecationWarning)
         kwargs['max_length'] = 15
         Field.__init__(self, *args, **kwargs)
 

@@ -6,7 +6,6 @@ import os
 import warnings
 import zipfile
 from optparse import make_option
-import warnings
 
 from django.conf import settings
 from django.core import serializers
@@ -134,7 +133,7 @@ class Command(BaseCommand):
 
                 for obj in objects:
                     objects_in_fixture += 1
-                    if router.allow_syncdb(self.using, obj.object.__class__):
+                    if router.allow_migrate(self.using, obj.object.__class__):
                         loaded_objects_in_fixture += 1
                         self.models.add(obj.object.__class__)
                         try:
@@ -183,7 +182,7 @@ class Command(BaseCommand):
         if self.verbosity >= 2:
             self.stdout.write("Loading '%s' fixtures..." % fixture_name)
 
-        if os.path.isabs(fixture_name):
+        if os.path.sep in fixture_name:
             fixture_dirs = [os.path.dirname(fixture_name)]
             fixture_name = os.path.basename(fixture_name)
         else:

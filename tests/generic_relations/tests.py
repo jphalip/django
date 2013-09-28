@@ -263,6 +263,29 @@ class GenericRelationsTests(TestCase):
         formset = GenericFormSet(initial=initial_data)
         self.assertEqual(formset.forms[0].initial, initial_data[0])
 
+    def test_get_or_create(self):
+        # get_or_create should work with virtual fields (content_object)
+        quartz = Mineral.objects.create(name="Quartz", hardness=7)
+        tag, created = TaggedItem.objects.get_or_create(tag="shiny",
+            defaults={'content_object': quartz})
+        self.assertTrue(created)
+        self.assertEqual(tag.tag, "shiny")
+        self.assertEqual(tag.content_object.id, quartz.id)
+
+    def test_update_or_create_defaults(self):
+        # update_or_create should work with virtual fields (content_object)
+        quartz = Mineral.objects.create(name="Quartz", hardness=7)
+        diamond = Mineral.objects.create(name="Diamond", hardness=7)
+        tag, created = TaggedItem.objects.update_or_create(tag="shiny",
+            defaults={'content_object': quartz})
+        self.assertTrue(created)
+        self.assertEqual(tag.content_object.id, quartz.id)
+
+        tag, created = TaggedItem.objects.update_or_create(tag="shiny",
+            defaults={'content_object': diamond})
+        self.assertFalse(created)
+        self.assertEqual(tag.content_object.id, diamond.id)
+
 
 class CustomWidget(forms.TextInput):
     pass
@@ -282,6 +305,32 @@ class GenericInlineFormsetTest(TestCase):
         Formset = generic_inlineformset_factory(TaggedItem, TaggedItemForm)
         form = Formset().forms[0]
         self.assertIsInstance(form['tag'].field.widget, CustomWidget)
+
+    def test_save_new_uses_form_save(self):
+        """
+        Regression for #16260: save_new should call form.save()
+        """
+        class SaveTestForm(forms.ModelForm):
+            def save(self, *args, **kwargs):
+                self.instance.saved_by = "custom method"
+                return super(SaveTestForm, self).save(*args, **kwargs)
+
+        Formset = generic_inlineformset_factory(
+            ForProxyModelModel, fields='__all__', form=SaveTestForm)
+
+        instance = ProxyRelatedModel.objects.create()
+
+        data = {
+            'form-TOTAL_FORMS': '1',
+            'form-INITIAL_FORMS': '0',
+            'form-MAX_NUM_FORMS': '',
+            'form-0-title': 'foo',
+        }
+
+        formset = Formset(data, instance=instance, prefix='form')
+        self.assertTrue(formset.is_valid())
+        new_obj = formset.save()[0]
+        self.assertEqual(new_obj.saved_by, "custom method")
 
     def test_save_new_for_proxy(self):
         Formset = generic_inlineformset_factory(ForProxyModelModel,

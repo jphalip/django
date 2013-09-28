@@ -77,9 +77,9 @@ class Aggregate(object):
         if hasattr(self.col, 'as_sql'):
             field_name, params = self.col.as_sql(qn, connection)
         elif isinstance(self.col, (list, tuple)):
-            field_name = '.'.join([qn(c) for c in self.col])
+            field_name = '.'.join(qn(c) for c in self.col)
         else:
-            field_name = self.col
+            field_name = qn(self.col)
 
         substitutions = {
             'function': self.sql_function,

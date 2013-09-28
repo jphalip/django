@@ -588,18 +588,16 @@ relation). Conditions in subsequent
 :meth:`~django.db.models.query.QuerySet.exclude` calls that refer to the same
 relation may end up filtering on different linked objects.
 
-.. _query-expressions:
+.. _using-f-expressions-in-filters:
 
 Filters can reference fields on the model
 -----------------------------------------
-
-.. class:: F
 
 In the examples given so far, we have constructed filters that compare
 the value of a model field with a constant. But what if you want to compare
 the value of a model field with another field on the same model?
 
-Django provides the :ref:`F() expressions <query-expressions>` to allow such
+Django provides :class:`F expressions <django.db.models.F>` to allow such
 comparisons. Instances of ``F()`` act as a reference to a model field within a
 query. These references can then be used in query filters to compare the values
 of two different fields on the same model instance.
@@ -639,19 +637,10 @@ that were modified more than 3 days after they were published::
     >>> from datetime import timedelta
     >>> Entry.objects.filter(mod_date__gt=F('pub_date') + timedelta(days=3))
 
-.. versionadded:: 1.5
-
-    ``.bitand()`` and ``.bitor()``
-
-The ``F()`` objects now support bitwise operations by ``.bitand()`` and
+The ``F()`` objects support bitwise operations by ``.bitand()`` and
 ``.bitor()``, for example::
 
     >>> F('somefield').bitand(16)
-
-.. versionchanged:: 1.5
-
-    The previously undocumented operators ``&`` and ``|`` no longer produce
-    bitwise operations, use ``.bitand()`` and ``.bitor()`` instead.
 
 The pk lookup shortcut
 ----------------------
@@ -788,15 +777,11 @@ being evaluated and therefore populate the cache::
 Complex lookups with Q objects
 ==============================
 
-.. class:: Q
-
 Keyword argument queries -- in :meth:`~django.db.models.query.QuerySet.filter`,
 etc. -- are "AND"ed together. If you need to execute more complex queries (for
-example, queries with ``OR`` statements), you can use ``Q`` objects.
+example, queries with ``OR`` statements), you can use :class:`Q objects <django.db.models.Q>`.
 
-.. comment: Link to Q does not work, since this documentation does not exist yet.
-
-A :class:`~django.db.models.Q` object (``django.db.models.Q``) is an object
+A :class:`Q object <django.db.models.Q>` (``django.db.models.Q``) is an object
 used to encapsulate a collection of keyword arguments. These keyword arguments
 are specified as in "Field lookups" above.
 
@@ -1028,10 +1013,10 @@ over them and call :meth:`~django.db.models.Model.save`::
     for item in my_queryset:
         item.save()
 
-Calls to update can also use :ref:`F() objects <query-expressions>` to update
-one field based on the value of another field in the model. This is especially
-useful for incrementing counters based upon their current value. For example, to
-increment the pingback count for every entry in the blog::
+Calls to update can also use :class:`F expressions <django.db.models.F>` to
+update one field based on the value of another field in the model. This is
+especially useful for incrementing counters based upon their current value. For
+example, to increment the pingback count for every entry in the blog::
 
     >>> Entry.objects.all().update(n_pingbacks=F('n_pingbacks') + 1)
 
@@ -1150,6 +1135,31 @@ above example code would look like this::
     # b.entries is a Manager that returns QuerySets.
     >>> b.entries.filter(headline__contains='Lennon')
     >>> b.entries.count()
+
+.. _using-custom-reverse-manager:
+
+Using a custom reverse manager
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 1.7
+
+By default the :class:`~django.db.models.fields.related.RelatedManager` used
+for reverse relations is a subclass of the :ref:`default manager <manager-names>`
+for that model. If you would like to specify a different manager for a given
+query you can use the following syntax::
+
+    from django.db import models
+
+    class Entry(models.Model):
+        #...
+        objects = models.Manager() # Default Manager
+        entries = EntryManager() # Custom Manager
+
+    >>> b = Blog.objects.get(id=1)
+    >>> b.entry_set(manager='entries').all()
+
+Additional methods to handle related objects
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In addition to the :class:`~django.db.models.query.QuerySet` methods defined in
 "Retrieving objects" above, the :class:`~django.db.models.ForeignKey`

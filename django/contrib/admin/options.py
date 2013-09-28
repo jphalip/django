@@ -8,7 +8,7 @@ from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin import widgets, helpers
-from django.contrib.admin.util import (unquote, flatten_fieldsets, get_deleted_objects,
+from django.contrib.admin.utils import (unquote, flatten_fieldsets, get_deleted_objects,
     model_format_dict, NestedObjects, lookup_needs_distinct)
 from django.contrib.admin import validation
 from django.contrib.admin.templatetags.admin_static import static
@@ -44,6 +44,7 @@ from django.views.decorators.csrf import csrf_protect
 
 
 IS_POPUP_VAR = '_popup'
+TO_FIELD_VAR = '_to_field'
 
 HORIZONTAL, VERTICAL = 1, 2
 # returns the <ul> class for a given radio_admin field
@@ -107,6 +108,7 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
         validator.validate(cls, model)
 
     def __init__(self):
+        self._orig_formfield_overrides = self.formfield_overrides
         overrides = FORMFIELD_FOR_DBFIELD_DEFAULTS.copy()
         overrides.update(self.formfield_overrides)
         self.formfield_overrides = overrides
@@ -123,6 +125,9 @@ class BaseModelAdmin(six.with_metaclass(RenameBaseModelAdminMethods)):
         # If the field specifies choices, we don't need to look for special
         # admin widgets - we just need to use a select widget of some kind.
         if db_field.choices:
+            # see #19303 for an explanation of self._orig_formfield_overrides
+            if db_field.__class__ in self._orig_formfield_overrides:
+                kwargs = dict(self._orig_formfield_overrides[db_field.__class__], **kwargs)
             return self.formfield_for_choice_field(db_field, request, **kwargs)
 
         # ForeignKey or ManyToManyFields
@@ -466,21 +471,11 @@ class ModelAdmin(BaseModelAdmin):
         info = self.model._meta.app_label, self.model._meta.model_name
 
         urlpatterns = patterns('',
-            url(r'^$',
-                wrap(self.changelist_view),
-                name='%s_%s_changelist' % info),
-            url(r'^add/$',
-                wrap(self.add_view),
-                name='%s_%s_add' % info),
-            url(r'^(.+)/history/$',
-                wrap(self.history_view),
-                name='%s_%s_history' % info),
-            url(r'^(.+)/delete/$',
-                wrap(self.delete_view),
-                name='%s_%s_delete' % info),
-            url(r'^(.+)/$',
-                wrap(self.change_view),
-                name='%s_%s_change' % info),
+            url(r'^$', wrap(self.changelist_view), name='%s_%s_changelist' % info),
+            url(r'^add/$', wrap(self.add_view), name='%s_%s_add' % info),
+            url(r'^(.+)/history/$', wrap(self.history_view), name='%s_%s_history' % info),
+            url(r'^(.+)/delete/$', wrap(self.delete_view), name='%s_%s_delete' % info),
+            url(r'^(.+)/$', wrap(self.change_view), name='%s_%s_change' % info),
         )
         return urlpatterns
 
@@ -607,9 +602,47 @@ class ModelAdmin(BaseModelAdmin):
             self.get_changelist_form(request), extra=0,
             fields=self.list_editable, **defaults)
 
-    def get_formsets(self, request, obj=None):
+    def _get_formsets(self, request, obj):
+        """
+        Helper function that exists to allow the deprecation warning to be
+        executed while this function continues to return a generator.
+        """
         for inline in self.get_inline_instances(request, obj):
             yield inline.get_formset(request, obj)
+
+    def get_formsets(self, request, obj=None):
+        warnings.warn(
+            "ModelAdmin.get_formsets() is deprecated and will be removed in "
+            "Django 1.9. Use ModelAdmin.get_formsets_with_inlines() instead.",
+            PendingDeprecationWarning, stacklevel=2
+        )
+        return self._get_formsets(request, obj)
+
+    def get_formsets_with_inlines(self, request, obj=None):
+        """
+        Yields formsets and the corresponding inlines.
+        """
+        # We call get_formsets() [deprecated] and check if it triggers a
+        # warning. If it does, then it's ours and we can safely ignore it, but
+        # if it doesn't then it has been overridden so we must warn about the
+        # deprecation.
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            formsets = self.get_formsets(request, obj)
+
+        if len(w) != 1 or not issubclass(w[0].category, PendingDeprecationWarning):
+            warnings.warn(
+                "ModelAdmin.get_formsets() is deprecated and will be removed in "
+                "Django 1.9. Use ModelAdmin.get_formsets_with_inlines() instead.",
+                PendingDeprecationWarning
+            )
+            if formsets:
+                zipped = zip(formsets, self.get_inline_instances(request, None))
+                for formset, inline in zipped:
+                    yield formset, inline
+        else:
+            for inline in self.get_inline_instances(request, obj):
+                yield inline.get_formset(request, obj), inline
 
     def get_paginator(self, request, queryset, per_page, orphans=0, allow_empty_first_page=True):
         return self.paginator(queryset, per_page, orphans, allow_empty_first_page)
@@ -694,16 +727,16 @@ class ModelAdmin(BaseModelAdmin):
             # Avoid trying to iterate over None
             if not class_actions:
                 continue
-            actions.extend([self.get_action(action) for action in class_actions])
+            actions.extend(self.get_action(action) for action in class_actions)
 
         # get_action might have returned None, so filter any of those out.
         actions = filter(None, actions)
 
         # Convert the actions into an OrderedDict keyed by name.
-        actions = OrderedDict([
+        actions = OrderedDict(
             (name, (func, name, desc))
             for func, name, desc in actions
-        ])
+        )
 
         return actions
 
@@ -938,6 +971,8 @@ class ModelAdmin(BaseModelAdmin):
             'content_type_id': ContentType.objects.get_for_model(self.model).id,
             'save_as': self.save_as,
             'save_on_top': self.save_on_top,
+            'to_field_var': TO_FIELD_VAR,
+            'is_popup_var': IS_POPUP_VAR
         })
         if add and self.add_form_template is not None:
             form_template = self.add_form_template
@@ -957,13 +992,20 @@ class ModelAdmin(BaseModelAdmin):
         opts = obj._meta
         pk_value = obj._get_pk_val()
         preserved_filters = self.get_preserved_filters(request)
-
         msg_dict = {'name': force_text(opts.verbose_name), 'obj': force_text(obj)}
         # Here, we distinguish between different save types by checking for
         # the presence of keys in request.POST.
+
         if IS_POPUP_VAR in request.POST:
+            to_field = request.POST.get(TO_FIELD_VAR)
+            if to_field:
+                attr = str(to_field)
+            else:
+                attr = obj._meta.pk.attname
+            value = obj.serializable_value(attr)
             return SimpleTemplateResponse('admin/popup_response.html', {
-                'pk_value': escape(pk_value),
+                'pk_value': escape(pk_value), # for possible backwards-compatibility
+                'value': escape(value),
                 'obj': escapejs(obj)
             })
 
@@ -994,6 +1036,7 @@ class ModelAdmin(BaseModelAdmin):
         """
         Determines the HttpResponse for the change_view stage.
         """
+
         opts = self.model._meta
         pk_value = obj._get_pk_val()
         preserved_filters = self.get_preserved_filters(request)
@@ -1132,6 +1175,43 @@ class ModelAdmin(BaseModelAdmin):
             self.message_user(request, msg, messages.WARNING)
             return None
 
+    def response_delete(self, request, obj_display):
+        """
+        Determines the HttpResponse for the delete_view stage.
+        """
+
+        opts = self.model._meta
+
+        self.message_user(request, _(
+            'The %(name)s "%(obj)s" was deleted successfully.') % {
+                                   'name': force_text(opts.verbose_name),
+                                   'obj': force_text(obj_display)},
+                          messages.SUCCESS)
+
+        if self.has_change_permission(request, None):
+            post_url = reverse('admin:%s_%s_changelist' %
+                               (opts.app_label, opts.model_name),
+                               current_app=self.admin_site.name)
+            preserved_filters = self.get_preserved_filters(request)
+            post_url = add_preserved_filters(
+                {'preserved_filters': preserved_filters, 'opts': opts}, post_url
+            )
+        else:
+            post_url = reverse('admin:index',
+                               current_app=self.admin_site.name)
+        return HttpResponseRedirect(post_url)
+
+    def render_delete_form(self, request, context):
+        opts = self.model._meta
+        app_label = opts.app_label
+
+        return TemplateResponse(request,
+            self.delete_confirmation_template or [
+            "admin/{}/{}/delete_confirmation.html".format(app_label, opts.model_name),
+            "admin/{}/delete_confirmation.html".format(app_label),
+            "admin/delete_confirmation.html"
+       ], context, current_app=self.admin_site.name)
+
     @csrf_protect_m
     @transaction.atomic
     def add_view(self, request, form_url='', extra_context=None):
@@ -1143,8 +1223,6 @@ class ModelAdmin(BaseModelAdmin):
             raise PermissionDenied
 
         ModelForm = self.get_form(request)
-        formsets = []
-        inline_instances = self.get_inline_instances(request, None)
         if request.method == 'POST':
             form = ModelForm(request.POST, request.FILES)
             if form.is_valid():
@@ -1153,7 +1231,7 @@ class ModelAdmin(BaseModelAdmin):
             else:
                 form_validated = False
                 new_object = self.model()
-            formsets = self._create_formsets(request, new_object, inline_instances)
+            formsets, inline_instances = self._create_formsets(request, new_object)
             if all_valid(formsets) and form_validated:
                 self.save_model(request, new_object, form, False)
                 self.save_related(request, form, formsets, False)
@@ -1171,7 +1249,7 @@ class ModelAdmin(BaseModelAdmin):
                 if isinstance(f, models.ManyToManyField):
                     initial[k] = initial[k].split(",")
             form = ModelForm(initial=initial)
-            formsets = self._create_formsets(request, self.model(), inline_instances)
+            formsets, inline_instances = self._create_formsets(request, self.model())
 
         adminForm = helpers.AdminForm(form, list(self.get_fieldsets(request)),
             self.get_prepopulated_fields(request),
@@ -1189,16 +1267,17 @@ class ModelAdmin(BaseModelAdmin):
             inline_admin_formsets.append(inline_admin_formset)
             media = media + inline_admin_formset.media
 
-        context = {
-            'title': _('Add %s') % force_text(opts.verbose_name),
-            'adminform': adminForm,
-            'is_popup': IS_POPUP_VAR in request.REQUEST,
-            'media': media,
-            'inline_admin_formsets': inline_admin_formsets,
-            'errors': helpers.AdminErrorList(form, formsets),
-            'app_label': opts.app_label,
-            'preserved_filters': self.get_preserved_filters(request),
-        }
+        context = dict(self.admin_site.each_context(),
+            title=_('Add %s') % force_text(opts.verbose_name),
+            adminform=adminForm,
+            is_popup=IS_POPUP_VAR in request.REQUEST,
+            to_field=request.REQUEST.get(TO_FIELD_VAR),
+            media=media,
+            inline_admin_formsets=inline_admin_formsets,
+            errors=helpers.AdminErrorList(form, formsets),
+            app_label=opts.app_label,
+            preserved_filters=self.get_preserved_filters(request),
+        )
         context.update(extra_context or {})
         return self.render_change_form(request, context, form_url=form_url, add=True)
 
@@ -1223,7 +1302,6 @@ class ModelAdmin(BaseModelAdmin):
                                     current_app=self.admin_site.name))
 
         ModelForm = self.get_form(request, obj)
-        inline_instances = self.get_inline_instances(request, obj)
         if request.method == 'POST':
             form = ModelForm(request.POST, request.FILES, instance=obj)
             if form.is_valid():
@@ -1232,7 +1310,7 @@ class ModelAdmin(BaseModelAdmin):
             else:
                 form_validated = False
                 new_object = obj
-            formsets = self._create_formsets(request, new_object, inline_instances)
+            formsets, inline_instances = self._create_formsets(request, new_object)
             if all_valid(formsets) and form_validated:
                 self.save_model(request, new_object, form, True)
                 self.save_related(request, form, formsets, True)
@@ -1242,7 +1320,7 @@ class ModelAdmin(BaseModelAdmin):
 
         else:
             form = ModelForm(instance=obj)
-            formsets = self._create_formsets(request, obj, inline_instances)
+            formsets, inline_instances = self._create_formsets(request, obj)
 
         adminForm = helpers.AdminForm(form, self.get_fieldsets(request, obj),
             self.get_prepopulated_fields(request, obj),
@@ -1260,18 +1338,19 @@ class ModelAdmin(BaseModelAdmin):
             inline_admin_formsets.append(inline_admin_formset)
             media = media + inline_admin_formset.media
 
-        context = {
-            'title': _('Change %s') % force_text(opts.verbose_name),
-            'adminform': adminForm,
-            'object_id': object_id,
-            'original': obj,
-            'is_popup': IS_POPUP_VAR in request.REQUEST,
-            'media': media,
-            'inline_admin_formsets': inline_admin_formsets,
-            'errors': helpers.AdminErrorList(form, formsets),
-            'app_label': opts.app_label,
-            'preserved_filters': self.get_preserved_filters(request),
-        }
+        context = dict(self.admin_site.each_context(),
+            title=_('Change %s') % force_text(opts.verbose_name),
+            adminform=adminForm,
+            object_id=object_id,
+            original=obj,
+            is_popup=IS_POPUP_VAR in request.REQUEST,
+            to_field=request.REQUEST.get(TO_FIELD_VAR),
+            media=media,
+            inline_admin_formsets=inline_admin_formsets,
+            errors=helpers.AdminErrorList(form, formsets),
+            app_label=opts.app_label,
+            preserved_filters=self.get_preserved_filters(request),
+        )
         context.update(extra_context or {})
         return self.render_change_form(request, context, change=True, obj=obj, form_url=form_url)
 
@@ -1406,23 +1485,24 @@ class ModelAdmin(BaseModelAdmin):
         selection_note_all = ungettext('%(total_count)s selected',
             'All %(total_count)s selected', cl.result_count)
 
-        context = {
-            'module_name': force_text(opts.verbose_name_plural),
-            'selection_note': _('0 of %(cnt)s selected') % {'cnt': len(cl.result_list)},
-            'selection_note_all': selection_note_all % {'total_count': cl.result_count},
-            'title': cl.title,
-            'is_popup': cl.is_popup,
-            'cl': cl,
-            'media': media,
-            'has_add_permission': self.has_add_permission(request),
-            'opts': cl.opts,
-            'app_label': app_label,
-            'action_form': action_form,
-            'actions_on_top': self.actions_on_top,
-            'actions_on_bottom': self.actions_on_bottom,
-            'actions_selection_counter': self.actions_selection_counter,
-            'preserved_filters': self.get_preserved_filters(request),
-        }
+        context = dict(self.admin_site.each_context(),
+            module_name=force_text(opts.verbose_name_plural),
+            selection_note=_('0 of %(cnt)s selected') % {'cnt': len(cl.result_list)},
+            selection_note_all=selection_note_all % {'total_count': cl.result_count},
+            title=cl.title,
+            is_popup=cl.is_popup,
+            to_field=cl.to_field,
+            cl=cl,
+            media=media,
+            has_add_permission=self.has_add_permission(request),
+            opts=cl.opts,
+            app_label=app_label,
+            action_form=action_form,
+            actions_on_top=self.actions_on_top,
+            actions_on_bottom=self.actions_on_bottom,
+            actions_selection_counter=self.actions_selection_counter,
+            preserved_filters=self.get_preserved_filters(request),
+        )
         context.update(extra_context or {})
 
         return TemplateResponse(request, self.change_list_template or [
@@ -1463,24 +1543,7 @@ class ModelAdmin(BaseModelAdmin):
             self.log_deletion(request, obj, obj_display)
             self.delete_model(request, obj)
 
-            self.message_user(request, _(
-                'The %(name)s "%(obj)s" was deleted successfully.') % {
-                                       'name': force_text(opts.verbose_name),
-                                       'obj': force_text(obj_display)},
-                              messages.SUCCESS)
-
-            if self.has_change_permission(request, None):
-                post_url = reverse('admin:%s_%s_changelist' %
-                                   (opts.app_label, opts.model_name),
-                                   current_app=self.admin_site.name)
-                preserved_filters = self.get_preserved_filters(request)
-                post_url = add_preserved_filters(
-                    {'preserved_filters': preserved_filters, 'opts': opts}, post_url
-                )
-            else:
-                post_url = reverse('admin:index',
-                                   current_app=self.admin_site.name)
-            return HttpResponseRedirect(post_url)
+            return self.response_delete(request, obj_display)
 
         object_name = force_text(opts.verbose_name)
 
@@ -1489,31 +1552,27 @@ class ModelAdmin(BaseModelAdmin):
         else:
             title = _("Are you sure?")
 
-        context = {
-            "title": title,
-            "object_name": object_name,
-            "object": obj,
-            "deleted_objects": deleted_objects,
-            "perms_lacking": perms_needed,
-            "protected": protected,
-            "opts": opts,
-            "app_label": app_label,
-            'preserved_filters': self.get_preserved_filters(request),
-        }
+        context = dict(self.admin_site.each_context(),
+            title=title,
+            object_name=object_name,
+            object=obj,
+            deleted_objects=deleted_objects,
+            perms_lacking=perms_needed,
+            protected=protected,
+            opts=opts,
+            app_label=app_label,
+            preserved_filters=self.get_preserved_filters(request),
+        )
         context.update(extra_context or {})
 
-        return TemplateResponse(request, self.delete_confirmation_template or [
-            "admin/%s/%s/delete_confirmation.html" % (app_label, opts.model_name),
-            "admin/%s/delete_confirmation.html" % app_label,
-            "admin/delete_confirmation.html"
-        ], context, current_app=self.admin_site.name)
+        return self.render_delete_form(request, context)
 
     def history_view(self, request, object_id, extra_context=None):
         "The 'history' admin view for this model."
         from django.contrib.admin.models import LogEntry
         # First check if the user can see this history.
         model = self.model
-        obj = get_object_or_404(model, pk=unquote(object_id))
+        obj = get_object_or_404(self.get_queryset(request), pk=unquote(object_id))
 
         if not self.has_change_permission(request, obj):
             raise PermissionDenied
@@ -1526,15 +1585,15 @@ class ModelAdmin(BaseModelAdmin):
             content_type__id__exact=ContentType.objects.get_for_model(model).id
         ).select_related().order_by('action_time')
 
-        context = {
-            'title': _('Change history: %s') % force_text(obj),
-            'action_list': action_list,
-            'module_name': capfirst(force_text(opts.verbose_name_plural)),
-            'object': obj,
-            'app_label': app_label,
-            'opts': opts,
-            'preserved_filters': self.get_preserved_filters(request),
-        }
+        context = dict(self.admin_site.each_context(),
+            title=_('Change history: %s') % force_text(obj),
+            action_list=action_list,
+            module_name=capfirst(force_text(opts.verbose_name_plural)),
+            object=obj,
+            app_label=app_label,
+            opts=opts,
+            preserved_filters=self.get_preserved_filters(request),
+        )
         context.update(extra_context or {})
         return TemplateResponse(request, self.object_history_template or [
             "admin/%s/%s/object_history.html" % (app_label, opts.model_name),
@@ -1542,14 +1601,15 @@ class ModelAdmin(BaseModelAdmin):
             "admin/object_history.html"
         ], context, current_app=self.admin_site.name)
 
-    def _create_formsets(self, request, obj, inline_instances):
+    def _create_formsets(self, request, obj):
         "Helper function to generate formsets for add/change_view."
         formsets = []
+        inline_instances = []
         prefixes = {}
         get_formsets_args = [request]
         if obj.pk:
             get_formsets_args.append(obj)
-        for FormSet, inline in zip(self.get_formsets(*get_formsets_args), inline_instances):
+        for FormSet, inline in self.get_formsets_with_inlines(*get_formsets_args):
             prefix = FormSet.get_default_prefix()
             prefixes[prefix] = prefixes.get(prefix, 0) + 1
             if prefixes[prefix] != 1 or not prefix:
@@ -1566,7 +1626,8 @@ class ModelAdmin(BaseModelAdmin):
                     'save_as_new': '_saveasnew' in request.POST
                 })
             formsets.append(FormSet(**formset_params))
-        return formsets
+            inline_instances.append(inline)
+        return formsets, inline_instances
 
 
 class InlineModelAdmin(BaseModelAdmin):

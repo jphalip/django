@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+from __future__ import division
+
 import logging
 import os
 import shutil
@@ -35,6 +37,7 @@ TEMP_DIR = tempfile.mkdtemp(prefix='django_')
 os.environ['DJANGO_TEST_TEMP_DIR'] = TEMP_DIR
 
 SUBDIRS_TO_SKIP = [
+    'coverage_html',
     'data',
     'requirements',
     'templates',
@@ -97,7 +100,7 @@ def get_installed():
 def setup(verbosity, test_labels):
     from django.conf import settings
     from django.db.models.loading import get_apps, load_app
-    from django.test.testcases import TransactionTestCase, TestCase
+    from django.test import TransactionTestCase, TestCase
 
     # Force declaring available_apps in TransactionTestCase for faster tests.
     def no_available_apps(self):
@@ -205,8 +208,16 @@ def django_tests(verbosity, interactive, failfast, test_labels):
         interactive=interactive,
         failfast=failfast,
     )
-    failures = test_runner.run_tests(
-        test_labels or get_installed(), extra_tests=extra_tests)
+    # Catch warnings thrown in test DB setup -- remove in Django 1.9
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore',
+            "Custom SQL location '<app_label>/models/sql' is deprecated, "
+            "use '<app_label>/sql' instead.",
+            PendingDeprecationWarning
+        )
+        failures = test_runner.run_tests(
+            test_labels or get_installed(), extra_tests=extra_tests)
 
     teardown(state)
     return failures
@@ -238,7 +249,7 @@ def bisect_tests(bisection_label, options, test_labels):
 
     iteration = 1
     while len(test_labels) > 1:
-        midpoint = len(test_labels)/2
+        midpoint = len(test_labels) // 2
         test_labels_a = test_labels[:midpoint] + [bisection_label]
         test_labels_b = test_labels[midpoint:] + [bisection_label]
         print('***** Pass %da: Running the first half of the test suite' % iteration)

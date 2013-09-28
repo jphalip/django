@@ -29,8 +29,8 @@ from .models import (Article, Chapter, Account, Media, Child, Parent, Picture,
     Album, Question, Answer, ComplexSortedPerson, PluggableSearchPerson, PrePopulatedPostLargeSlug,
     AdminOrderedField, AdminOrderedModelMethod, AdminOrderedAdminMethod,
     AdminOrderedCallable, Report, Color2, UnorderedObject, MainPrepopulated,
-    RelatedPrepopulated, UndeletableObject, UserMessenger, Simple, Choice,
-    ShortMessage, Telegram)
+    RelatedPrepopulated, UndeletableObject, UnchangeableObject, UserMessenger, Simple, Choice,
+    ShortMessage, Telegram, FilteredManager)
 
 
 def callable_year(dt_value):
@@ -450,6 +450,10 @@ class GadgetAdmin(admin.ModelAdmin):
         return CustomChangeList
 
 
+class ToppingAdmin(admin.ModelAdmin):
+    readonly_fields = ('pizzas',)
+
+
 class PizzaAdmin(admin.ModelAdmin):
     readonly_fields = ('toppings',)
 
@@ -656,12 +660,25 @@ class UndeletableObjectAdmin(admin.ModelAdmin):
         return super(UndeletableObjectAdmin, self).change_view(*args, **kwargs)
 
 
+class UnchangeableObjectAdmin(admin.ModelAdmin):
+    def get_urls(self):
+        # Disable change_view, but leave other urls untouched
+        urlpatterns = super(UnchangeableObjectAdmin, self).get_urls()
+        return [p for p in urlpatterns if not p.name.endswith("_change")]
+
+
 def callable_on_unknown(obj):
     return obj.unknown
 
 
 class AttributeErrorRaisingAdmin(admin.ModelAdmin):
     list_display = [callable_on_unknown, ]
+
+
+class CustomManagerAdmin(admin.ModelAdmin):
+    def get_queryset(self, request):
+        return FilteredManager.objects
+
 
 class MessageTestingAdmin(admin.ModelAdmin):
     actions = ["message_debug", "message_info", "message_success",
@@ -741,6 +758,7 @@ site.register(Report, ReportAdmin)
 site.register(MainPrepopulated, MainPrepopulatedAdmin)
 site.register(UnorderedObject, UnorderedObjectAdmin)
 site.register(UndeletableObject, UndeletableObjectAdmin)
+site.register(UnchangeableObject, UnchangeableObjectAdmin)
 
 # We intentionally register Promo and ChapterXtra1 but not Chapter nor ChapterXtra2.
 # That way we cover all four cases:
@@ -750,17 +768,18 @@ site.register(UndeletableObject, UndeletableObjectAdmin)
 #     related OneToOne object not registered in admin
 # when deleting Book so as exercise all four troublesome (w.r.t escaping
 # and calling force_text to avoid problems on Python 2.3) paths through
-# contrib.admin.util's get_deleted_objects function.
+# contrib.admin.utils's get_deleted_objects function.
 site.register(Book, inlines=[ChapterInline])
 site.register(Promo)
 site.register(ChapterXtra1, ChapterXtra1Admin)
 site.register(Pizza, PizzaAdmin)
-site.register(Topping)
+site.register(Topping, ToppingAdmin)
 site.register(Album, AlbumAdmin)
 site.register(Question)
 site.register(Answer)
 site.register(PrePopulatedPost, PrePopulatedPostAdmin)
 site.register(ComplexSortedPerson, ComplexSortedPersonAdmin)
+site.register(FilteredManager, CustomManagerAdmin)
 site.register(PluggableSearchPerson, PluggableSearchPersonAdmin)
 site.register(PrePopulatedPostLargeSlug, PrePopulatedPostLargeSlugAdmin)
 site.register(AdminOrderedField, AdminOrderedFieldAdmin)

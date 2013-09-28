@@ -15,6 +15,7 @@ from django.db.models.sql.where import WhereNode, EverythingNode, NothingNode
 from django.db.models.sql.datastructures import EmptyResultSet
 from django.test import TestCase, skipUnlessDBFeature
 from django.test.utils import str_prefix
+from django.utils import six
 
 from .models import (
     Annotation, Article, Author, Celebrity, Child, Cover, Detail, DumbCategory,
@@ -25,7 +26,7 @@ from .models import (
     OneToOneCategory, NullableName, ProxyCategory, SingleObject, RelatedObject,
     ModelA, ModelB, ModelC, ModelD, Responsibility, Job, JobResponsibilities,
     BaseA, FK1, Identifier, Program, Channel, Page, Paragraph, Chapter, Book,
-    MyObject, Order, OrderItem)
+    MyObject, Order, OrderItem, SharedConnection, Task, Staff, StaffUser)
 
 class BaseQuerysetTest(TestCase):
     def assertValueQuerysetEqual(self, qs, values):
@@ -969,7 +970,7 @@ class Queries1Tests(BaseQuerysetTest):
         q = NamedCategory.objects.filter(tag__parent__isnull=True)
         self.assertTrue(str(q.query).count('INNER JOIN') == 1)
         self.assertTrue(str(q.query).count('LEFT OUTER JOIN') == 1)
-        self.assertQuerysetEqual( q, ['<NamedCategory: NamedCategory object>'])
+        self.assertQuerysetEqual(q, ['<NamedCategory: Generic>'])
 
     def test_ticket_10790_4(self):
         # Querying across m2m field should not strip the m2m table from join.
@@ -1278,6 +1279,13 @@ class Queries4Tests(BaseQuerysetTest):
 
         Item.objects.create(name='i1', created=datetime.datetime.now(), note=n1, creator=self.a1)
         Item.objects.create(name='i2', created=datetime.datetime.now(), note=n1, creator=self.a3)
+
+    def test_ticket11811(self):
+        unsaved_category = NamedCategory(name="Other")
+        with six.assertRaisesRegex(self, ValueError,
+                'Unsaved model instance <NamedCategory: Other> '
+                'cannot be used in an ORM query.'):
+            Tag.objects.filter(pk=self.t1.pk).update(category=unsaved_category)
 
     def test_ticket14876(self):
         # Note: when combining the query we need to have information available
@@ -2480,6 +2488,13 @@ class EmptyStringsAsNullTest(TestCase):
             [self.nc.pk], attrgetter('pk')
         )
 
+    def test_21001(self):
+        foo = NamedCategory.objects.create(name='foo')
+        self.assertQuerysetEqual(
+            NamedCategory.objects.exclude(name=''),
+            [foo.pk], attrgetter('pk')
+        )
+
 class ProxyQueryCleanupTest(TestCase):
     def test_evaluated_proxy_count(self):
         """
@@ -2952,6 +2967,16 @@ class Ticket20788Tests(TestCase):
         self.assertQuerysetEqual(
             sentences_not_in_pub, [book2], lambda x: x)
 
+class Ticket12807Tests(TestCase):
+    def test_ticket_12807(self):
+        p1 = Paragraph.objects.create()
+        p2 = Paragraph.objects.create()
+        # The ORed condition below should have no effect on the query - the
+        # ~Q(pk__in=[]) will always be True.
+        qs = Paragraph.objects.filter((Q(pk=p2.pk) | ~Q(pk__in=[])) & Q(pk=p1.pk))
+        self.assertQuerysetEqual(qs, [p1], lambda x: x)
+
+
 class RelatedLookupTypeTests(TestCase):
     def test_wrong_type_lookup(self):
         oa = ObjectA.objects.create(name="oa")
@@ -2967,3 +2992,38 @@ class RelatedLookupTypeTests(TestCase):
         self.assertQuerysetEqual(
             ObjectB.objects.filter(objecta__in=[wrong_type]),
             [ob], lambda x: x)
+
+class Ticket14056Tests(TestCase):
+    def test_ticket_14056(self):
+        s1 = SharedConnection.objects.create(data='s1')
+        s2 = SharedConnection.objects.create(data='s2')
+        s3 = SharedConnection.objects.create(data='s3')
+        PointerA.objects.create(connection=s2)
+        expected_ordering = (
+            [s1, s3, s2] if connection.features.nulls_order_largest
+            else [s2, s1, s3]
+        )
+        self.assertQuerysetEqual(
+            SharedConnection.objects.order_by('-pointera__connection', 'pk'),
+            expected_ordering, lambda x: x
+        )
+
+class Ticket20955Tests(TestCase):
+    def test_ticket_20955(self):
+        jack = Staff.objects.create(name='jackstaff')
+        jackstaff = StaffUser.objects.create(staff=jack)
+        jill = Staff.objects.create(name='jillstaff')
+        jillstaff = StaffUser.objects.create(staff=jill)
+        task = Task.objects.create(creator=jackstaff, owner=jillstaff, title="task")
+        task_get = Task.objects.get(pk=task.pk)
+        # Load data so that assertNumQueries doesn't complain about the get
+        # version's queries.
+        task_get.creator.staffuser.staff
+        task_get.owner.staffuser.staff
+        task_select_related = Task.objects.select_related(
+            'creator__staffuser__staff', 'owner__staffuser__staff').get(pk=task.pk)
+        with self.assertNumQueries(0):
+            self.assertEqual(task_select_related.creator.staffuser.staff,
+                             task_get.creator.staffuser.staff)
+            self.assertEqual(task_select_related.owner.staffuser.staff,
+                             task_get.owner.staffuser.staff)

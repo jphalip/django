@@ -15,6 +15,7 @@ from django.test.utils import override_settings
 from django.utils.six import StringIO
 
 from .models import Book, Person, Pet, Review, UserProfile
+from .routers import TestRouter, AuthRouter, WriteRouter
 
 
 class QueryTestCase(TestCase):
@@ -919,61 +920,6 @@ class QueryTestCase(TestCase):
                                   extra_arg=True)
 
 
-class TestRouter(object):
-    # A test router. The behavior is vaguely master/slave, but the
-    # databases aren't assumed to propagate changes.
-    def db_for_read(self, model, instance=None, **hints):
-        if instance:
-            return instance._state.db or 'other'
-        return 'other'
-
-    def db_for_write(self, model, **hints):
-        return DEFAULT_DB_ALIAS
-
-    def allow_relation(self, obj1, obj2, **hints):
-        return obj1._state.db in ('default', 'other') and obj2._state.db in ('default', 'other')
-
-    def allow_syncdb(self, db, model):
-        return True
-
-class AuthRouter(object):
-    """A router to control all database operations on models in
-    the contrib.auth application"""
-
-    def db_for_read(self, model, **hints):
-        "Point all read operations on auth models to 'default'"
-        if model._meta.app_label == 'auth':
-            # We use default here to ensure we can tell the difference
-            # between a read request and a write request for Auth objects
-            return 'default'
-        return None
-
-    def db_for_write(self, model, **hints):
-        "Point all operations on auth models to 'other'"
-        if model._meta.app_label == 'auth':
-            return 'other'
-        return None
-
-    def allow_relation(self, obj1, obj2, **hints):
-        "Allow any relation if a model in Auth is involved"
-        if obj1._meta.app_label == 'auth' or obj2._meta.app_label == 'auth':
-            return True
-        return None
-
-    def allow_syncdb(self, db, model):
-        "Make sure the auth app only appears on the 'other' db"
-        if db == 'other':
-            return model._meta.app_label == 'auth'
-        elif model._meta.app_label == 'auth':
-            return False
-        return None
-
-class WriteRouter(object):
-    # A router that only expresses an opinion on writes
-    def db_for_write(self, model, **hints):
-        return 'writer'
-
-
 class ConnectionRouterTestCase(TestCase):
     @override_settings(DATABASE_ROUTERS=[
         'multiple_database.tests.TestRouter',
@@ -1019,33 +965,33 @@ class RouterTestCase(TestCase):
         self.assertEqual(Book.objects.db_manager('default').db, 'default')
         self.assertEqual(Book.objects.db_manager('default').all().db, 'default')
 
-    def test_syncdb_selection(self):
+    def test_migrate_selection(self):
         "Synchronization behavior is predictable"
 
-        self.assertTrue(router.allow_syncdb('default', User))
-        self.assertTrue(router.allow_syncdb('default', Book))
+        self.assertTrue(router.allow_migrate('default', User))
+        self.assertTrue(router.allow_migrate('default', Book))
 
-        self.assertTrue(router.allow_syncdb('other', User))
-        self.assertTrue(router.allow_syncdb('other', Book))
+        self.assertTrue(router.allow_migrate('other', User))
+        self.assertTrue(router.allow_migrate('other', Book))
 
         # Add the auth router to the chain.
         # TestRouter is a universal synchronizer, so it should have no effect.
         router.routers = [TestRouter(), AuthRouter()]
 
-        self.assertTrue(router.allow_syncdb('default', User))
-        self.assertTrue(router.allow_syncdb('default', Book))
+        self.assertTrue(router.allow_migrate('default', User))
+        self.assertTrue(router.allow_migrate('default', Book))
 
-        self.assertTrue(router.allow_syncdb('other', User))
-        self.assertTrue(router.allow_syncdb('other', Book))
+        self.assertTrue(router.allow_migrate('other', User))
+        self.assertTrue(router.allow_migrate('other', Book))
 
         # Now check what happens if the router order is the other way around
         router.routers = [AuthRouter(), TestRouter()]
 
-        self.assertFalse(router.allow_syncdb('default', User))
-        self.assertTrue(router.allow_syncdb('default', Book))
+        self.assertFalse(router.allow_migrate('default', User))
+        self.assertTrue(router.allow_migrate('default', Book))
 
-        self.assertTrue(router.allow_syncdb('other', User))
-        self.assertFalse(router.allow_syncdb('other', Book))
+        self.assertTrue(router.allow_migrate('other', User))
+        self.assertFalse(router.allow_migrate('other', Book))
 
     def test_partial_router(self):
         "A router can choose to implement a subset of methods"
@@ -1062,8 +1008,8 @@ class RouterTestCase(TestCase):
 
         self.assertTrue(router.allow_relation(dive, dive))
 
-        self.assertTrue(router.allow_syncdb('default', User))
-        self.assertTrue(router.allow_syncdb('default', Book))
+        self.assertTrue(router.allow_migrate('default', User))
+        self.assertTrue(router.allow_migrate('default', Book))
 
         router.routers = [WriteRouter(), AuthRouter(), TestRouter()]
 
@@ -1075,8 +1021,8 @@ class RouterTestCase(TestCase):
 
         self.assertTrue(router.allow_relation(dive, dive))
 
-        self.assertFalse(router.allow_syncdb('default', User))
-        self.assertTrue(router.allow_syncdb('default', Book))
+        self.assertFalse(router.allow_migrate('default', User))
+        self.assertTrue(router.allow_migrate('default', Book))
 
 
     def test_database_routing(self):
@@ -1607,12 +1553,12 @@ class AuthTestCase(TestCase):
         self.assertEqual(User.objects.using('other').count(), 1)
 
     def test_dumpdata(self):
-        "Check that dumpdata honors allow_syncdb restrictions on the router"
+        "Check that dumpdata honors allow_migrate restrictions on the router"
         User.objects.create_user('alice', 'alice@example.com')
         User.objects.db_manager('default').create_user('bob', 'bob@example.com')
 
         # Check that dumping the default database doesn't try to include auth
-        # because allow_syncdb prohibits auth on default
+        # because allow_migrate prohibits auth on default
         new_io = StringIO()
         management.call_command('dumpdata', 'auth', format='json', database='default', stdout=new_io)
         command_output = new_io.getvalue().strip()
@@ -1625,10 +1571,10 @@ class AuthTestCase(TestCase):
         self.assertTrue('"email": "alice@example.com"' in command_output)
 
 class AntiPetRouter(object):
-    # A router that only expresses an opinion on syncdb,
+    # A router that only expresses an opinion on migrate,
     # passing pets to the 'other' database
 
-    def allow_syncdb(self, db, model):
+    def allow_migrate(self, db, model):
         "Make sure the auth app only appears on the 'other' db"
         if db == 'other':
             return model._meta.object_name == 'Pet'
@@ -1917,11 +1863,11 @@ class RouterModelArgumentTestCase(TestCase):
 
 
 class SyncOnlyDefaultDatabaseRouter(object):
-    def allow_syncdb(self, db, model):
+    def allow_migrate(self, db, model):
         return db == DEFAULT_DB_ALIAS
 
 
-class SyncDBTestCase(TestCase):
+class MigrateTestCase(TestCase):
 
     available_apps  = [
         'multiple_database',
@@ -1930,27 +1876,27 @@ class SyncDBTestCase(TestCase):
     ]
     multi_db = True
 
-    def test_syncdb_to_other_database(self):
-        """Regression test for #16039: syncdb with --database option."""
+    def test_migrate_to_other_database(self):
+        """Regression test for #16039: migrate with --database option."""
         cts = ContentType.objects.using('other').filter(app_label='multiple_database')
 
         count = cts.count()
         self.assertGreater(count, 0)
 
         cts.delete()
-        management.call_command('syncdb', verbosity=0, interactive=False,
+        management.call_command('migrate', verbosity=0, interactive=False,
             load_initial_data=False, database='other')
         self.assertEqual(cts.count(), count)
 
-    def test_syncdb_to_other_database_with_router(self):
-        """Regression test for #16039: syncdb with --database option."""
+    def test_migrate_to_other_database_with_router(self):
+        """Regression test for #16039: migrate with --database option."""
         cts = ContentType.objects.using('other').filter(app_label='multiple_database')
 
         cts.delete()
         try:
             old_routers = router.routers
             router.routers = [SyncOnlyDefaultDatabaseRouter()]
-            management.call_command('syncdb', verbosity=0, interactive=False,
+            management.call_command('migrate', verbosity=0, interactive=False,
                 load_initial_data=False, database='other')
         finally:
             router.routers = old_routers

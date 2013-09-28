@@ -191,10 +191,6 @@ Django supports MySQL 5.0.3 and higher.
 `MySQL 5.0`_ adds the ``information_schema`` database, which contains detailed
 data on all database schema. Django's ``inspectdb`` feature uses it.
 
-.. versionchanged:: 1.5
-
-    The minimum version requirement of MySQL 5.0.3 was set in Django 1.5.
-
 Django expects the database to support Unicode (UTF-8 encoding) and delegates to
 it the task of enforcing transactions and referential integrity. It is important
 to be aware of the fact that the two latter ones aren't actually enforced by
@@ -218,13 +214,16 @@ full-text indexing and searching.
 
 Since MySQL 5.5.5, the default storage engine is InnoDB_. This engine is fully
 transactional and supports foreign key references. It's probably the best
-choice at this point.
+choice at this point. However, note that the the InnoDB autoincrement counter
+is lost on a MySQL restart because it does not remember the
+``AUTO_INCREMENT`` value, instead recreating it as "max(id)+1". This may
+result in an inadvertent reuse of :class:`~django.db.models.AutoField` values.
 
 If you upgrade an existing project to MySQL 5.5.5 and subsequently add some
 tables, ensure that your tables are using the same storage engine (i.e. MyISAM
 vs. InnoDB). Specifically, if tables that have a ``ForeignKey`` between them
 use different storage engines, you may see an error like the following when
-running ``syncdb``::
+running ``migrate``::
 
     _mysql_exceptions.OperationalError: (
         1005, "Can't create table '\\db_name\\.#sql-4a8_ab' (errno: 150)"
@@ -639,7 +638,7 @@ Parameters not quoted in ``connection.queries``
 ``sqlite3`` does not provide a way to retrieve the SQL after quoting and
 substituting the parameters. Instead, the SQL in ``connection.queries`` is
 rebuilt with a simple string interpolation. It may be incorrect. Make sure
-you add quotes where necessary before copying a query into a SQLite shell.
+you add quotes where necessary before copying a query into an SQLite shell.
 
 .. _oracle-notes:
 
@@ -663,7 +662,7 @@ required.
 .. _`Oracle Database Server`: http://www.oracle.com/
 .. _`cx_Oracle`: http://cx-oracle.sourceforge.net/
 
-In order for the ``python manage.py syncdb`` command to work, your Oracle
+In order for the ``python manage.py migrate`` command to work, your Oracle
 database user must have privileges to run the following commands:
 
 * CREATE TABLE
@@ -679,6 +678,14 @@ To run Django's test suite, the user needs these *additional* privileges:
 * DROP TABLESPACE
 * CONNECT WITH ADMIN OPTION
 * RESOURCE WITH ADMIN OPTION
+
+The Oracle database backend uses the ``SYS.DBMS_LOB`` package, so your user
+will require execute permissions on it. It's normally accessible to all users
+by default, but in case it is not, you'll need to grant permissions like so:
+
+.. code-block:: sql
+
+    GRANT EXECUTE ON SYS.DBMS_LOB TO user;
 
 Connecting to the database
 --------------------------
@@ -752,7 +759,7 @@ Oracle imposes a name length limit of 30 characters. To accommodate this, the
 backend truncates database identifiers to fit, replacing the final four
 characters of the truncated name with a repeatable MD5 hash value.
 
-When running syncdb, an ``ORA-06552`` error may be encountered if
+When running ``migrate``, an ``ORA-06552`` error may be encountered if
 certain Oracle keywords are used as the name of a model field or the
 value of a ``db_column`` option.  Django quotes all identifiers used
 in queries to prevent most such problems, but this error can still

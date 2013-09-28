@@ -310,7 +310,7 @@ class BaseCacheTests(object):
         # Don't want fields with callable as default to be called on cache write
         expensive_calculation.num_runs = 0
         Poll.objects.all().delete()
-        my_poll = Poll.objects.create(question="What?")
+        Poll.objects.create(question="What?")
         self.assertEqual(expensive_calculation.num_runs, 1)
         defer_qs = Poll.objects.all().defer('question')
         self.assertEqual(defer_qs.count(), 1)
@@ -323,14 +323,14 @@ class BaseCacheTests(object):
         # Don't want fields with callable as default to be called on cache read
         expensive_calculation.num_runs = 0
         Poll.objects.all().delete()
-        my_poll = Poll.objects.create(question="What?")
+        Poll.objects.create(question="What?")
         self.assertEqual(expensive_calculation.num_runs, 1)
         defer_qs = Poll.objects.all().defer('question')
         self.assertEqual(defer_qs.count(), 1)
         self.cache.set('deferred_queryset', defer_qs)
         self.assertEqual(expensive_calculation.num_runs, 1)
         runs_before_cache_read = expensive_calculation.num_runs
-        cached_polls = self.cache.get('deferred_queryset')
+        self.cache.get('deferred_queryset')
         # We only want the default expensive calculation run on creation and set
         self.assertEqual(expensive_calculation.num_runs, runs_before_cache_read)
 
@@ -857,10 +857,6 @@ class DBCacheTests(BaseCacheTests, TransactionTestCase):
         self.cache = get_cache(self.backend_name, LOCATION=self._table_name, OPTIONS={'MAX_ENTRIES': 30, 'CULL_FREQUENCY': 0})
         self.perform_cull_test(50, 18)
 
-    def test_old_initialization(self):
-        self.cache = get_cache('db://%s?max_entries=30&cull_frequency=0' % self._table_name)
-        self.perform_cull_test(50, 18)
-
     def test_second_call_doesnt_crash(self):
         with six.assertRaisesRegex(self, management.CommandError,
                 "Cache table 'test cache table' could not be created"):
@@ -895,7 +891,7 @@ class DBCacheRouter(object):
         if model._meta.app_label == 'django_cache':
             return 'other'
 
-    def allow_syncdb(self, db, model):
+    def allow_migrate(self, db, model):
         if model._meta.app_label == 'django_cache':
             return db == 'other'
 
@@ -954,10 +950,6 @@ class LocMemCacheTests(unittest.TestCase, BaseCacheTests):
 
     def test_zero_cull(self):
         self.cache = get_cache(self.backend_name, OPTIONS={'MAX_ENTRIES': 30, 'CULL_FREQUENCY': 0})
-        self.perform_cull_test(50, 19)
-
-    def test_old_initialization(self):
-        self.cache = get_cache('locmem://?max_entries=30&cull_frequency=0')
         self.perform_cull_test(50, 19)
 
     def test_multiple_caches(self):
@@ -1075,10 +1067,6 @@ class FileBasedCacheTests(unittest.TestCase, BaseCacheTests):
     def test_cull(self):
         self.perform_cull_test(50, 29)
 
-    def test_old_initialization(self):
-        self.cache = get_cache('file://%s?max_entries=30' % self.dirname)
-        self.perform_cull_test(50, 29)
-
 
 class CustomCacheKeyValidationTests(unittest.TestCase):
     """
@@ -1088,7 +1076,7 @@ class CustomCacheKeyValidationTests(unittest.TestCase):
 
     """
     def test_custom_key_validation(self):
-        cache = get_cache('cache.liberal_backend://')
+        cache = get_cache('cache.liberal_backend.CacheClass')
 
         # this key is both longer than 250 characters, and has spaces
         key = 'some key with spaces' * 15
@@ -1100,10 +1088,6 @@ class CustomCacheKeyValidationTests(unittest.TestCase):
 class GetCacheTests(unittest.TestCase):
 
     def test_simple(self):
-        cache = get_cache('locmem://')
-        from django.core.cache.backends.locmem import LocMemCache
-        self.assertIsInstance(cache, LocMemCache)
-
         from django.core.cache import cache
         self.assertIsInstance(cache, get_cache('default').__class__)
 
@@ -1776,7 +1760,7 @@ class CacheMiddlewareTest(IgnoreDeprecationWarningsMixin, TestCase):
         time.sleep(2)
 
         # ... the default cache will still hit
-        cache = get_cache('default')
+        get_cache('default')
         response = default_view(request, '11')
         self.assertEqual(response.content, b'Hello World 1')
 

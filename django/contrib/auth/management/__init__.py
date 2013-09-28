@@ -65,7 +65,7 @@ def create_permissions(app, created_models, verbosity, db=DEFAULT_DB_ALIAS, **kw
     except UnavailableApp:
         return
 
-    if not router.allow_syncdb(db, auth_app.Permission):
+    if not router.allow_migrate(db, auth_app.Permission):
         return
 
     from django.contrib.contenttypes.models import ContentType
@@ -142,7 +142,7 @@ def get_system_username():
         # if there is no corresponding entry in the /etc/passwd file
         # (a very restricted chroot environment, for example).
         return ''
-    if not six.PY3:
+    if six.PY2:
         try:
             result = result.decode(DEFAULT_LOCALE_ENCODING)
         except UnicodeDecodeError:
@@ -167,8 +167,9 @@ def get_default_username(check_db=True):
 
     default_username = get_system_username()
     try:
-        default_username = unicodedata.normalize('NFKD', default_username)\
-            .encode('ascii', 'ignore').decode('ascii').replace(' ', '').lower()
+        default_username = (unicodedata.normalize('NFKD', default_username)
+                .encode('ascii', 'ignore').decode('ascii')
+                .replace(' ', '').lower())
     except UnicodeDecodeError:
         return ''
 
@@ -188,7 +189,7 @@ def get_default_username(check_db=True):
             return ''
     return default_username
 
-signals.post_syncdb.connect(create_permissions,
+signals.post_migrate.connect(create_permissions,
     dispatch_uid="django.contrib.auth.management.create_permissions")
-signals.post_syncdb.connect(create_superuser,
+signals.post_migrate.connect(create_superuser,
     sender=auth_app, dispatch_uid="django.contrib.auth.management.create_superuser")

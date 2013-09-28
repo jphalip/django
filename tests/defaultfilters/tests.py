@@ -89,7 +89,7 @@ class DefaultFiltersTests(TestCase):
     # The test above fails because of Python 2's float handling. Floats with
     # many zeroes after the decimal point should be passed in as another type
     # such as unicode or Decimal.
-    if not six.PY3:
+    if six.PY2:
         test_floatformat_py2_fail = unittest.expectedFailure(test_floatformat_py2_fail)
 
 
@@ -324,6 +324,24 @@ class DefaultFiltersTests(TestCase):
         self.assertEqual(urlize('http://[2001:db8:cafe::2]/api/9'),
             '<a href="http://[2001:db8:cafe::2]/api/9" rel="nofollow">http://[2001:db8:cafe::2]/api/9</a>')
 
+        # Check urlize correctly include quotation marks in links - #20364
+        self.assertEqual(urlize('before "hi@example.com" afterwards'),
+                         'before "<a href="mailto:hi@example.com">hi@example.com</a>" afterwards')
+        self.assertEqual(urlize('before hi@example.com" afterwards'),
+                         'before <a href="mailto:hi@example.com">hi@example.com</a>" afterwards')
+        self.assertEqual(urlize('before "hi@example.com afterwards'),
+                         'before "<a href="mailto:hi@example.com">hi@example.com</a> afterwards')
+        self.assertEqual(urlize('before \'hi@example.com\' afterwards'),
+                         'before \'<a href="mailto:hi@example.com">hi@example.com</a>\' afterwards')
+        self.assertEqual(urlize('before hi@example.com\' afterwards'),
+                         'before <a href="mailto:hi@example.com">hi@example.com</a>\' afterwards')
+        self.assertEqual(urlize('before \'hi@example.com afterwards'),
+                         'before \'<a href="mailto:hi@example.com">hi@example.com</a> afterwards')
+
+        # Check urlize copes with commas following URLs in quotes - see #20364 
+        self.assertEqual(urlize('Email us at "hi@example.com", or phone us at +xx.yy'),
+            'Email us at "<a href="mailto:hi@example.com">hi@example.com</a>", or phone us at +xx.yy')
+
     def test_wordcount(self):
         self.assertEqual(wordcount(''), 0)
         self.assertEqual(wordcount('oneword'), 1)
@@ -481,7 +499,7 @@ class DefaultFiltersTests(TestCase):
         @python_2_unicode_compatible
         class ULItem(object):
             def __init__(self, title):
-              self.title = title
+                self.title = title
             def __str__(self):
                 return 'ulitem-%s' % str(self.title)
 

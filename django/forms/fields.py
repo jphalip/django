@@ -9,16 +9,13 @@ import datetime
 import os
 import re
 import sys
-try:
-    from urllib.parse import urlsplit, urlunsplit
-except ImportError:     # Python 2
-    from urlparse import urlsplit, urlunsplit
+import warnings
 from decimal import Decimal, DecimalException
 from io import BytesIO
 
 from django.core import validators
 from django.core.exceptions import ValidationError
-from django.forms.util import ErrorList, from_current_timezone, to_current_timezone
+from django.forms.utils import ErrorList, from_current_timezone, to_current_timezone
 from django.forms.widgets import (
     TextInput, NumberInput, EmailInput, URLInput, HiddenInput,
     MultipleHiddenInput, ClearableFileInput, CheckboxInput, Select,
@@ -29,6 +26,7 @@ from django.utils import formats
 from django.utils.encoding import smart_text, force_str, force_text
 from django.utils.ipv6 import clean_ipv6_address
 from django.utils import six
+from django.utils.six.moves.urllib.parse import urlsplit, urlunsplit
 from django.utils.translation import ugettext_lazy as _, ungettext_lazy
 
 # Provide this import for backwards compatibility.
@@ -118,8 +116,6 @@ class Field(object):
         super(Field, self).__init__()
 
     def prepare_value(self, value):
-        if self.widget.is_localized:
-            value = formats.localize_input(value)
         return value
 
     def to_python(self, value):
@@ -280,6 +276,15 @@ class FloatField(IntegerField):
             value = float(value)
         except (ValueError, TypeError):
             raise ValidationError(self.error_messages['invalid'], code='invalid')
+        return value
+
+    def validate(self, value):
+        super(FloatField, self).validate(value)
+
+        # Check for NaN (which is the only thing not equal to itself) and +/- infinity
+        if value != value or value in (Decimal('Inf'), Decimal('-Inf')):
+            raise ValidationError(self.error_messages['invalid'], code='invalid')
+
         return value
 
     def widget_attrs(self, widget):
@@ -462,7 +467,6 @@ class DateTimeField(BaseTemporalField):
     }
 
     def prepare_value(self, value):
-        value = super(DateTimeField, self).prepare_value(value)
         if isinstance(value, datetime.datetime):
             value = to_current_timezone(value)
         return value
@@ -874,8 +878,8 @@ class MultipleChoiceField(ChoiceField):
             data = []
         if len(initial) != len(data):
             return True
-        initial_set = set([force_text(value) for value in initial])
-        data_set = set([force_text(value) for value in data])
+        initial_set = set(force_text(value) for value in initial)
+        data_set = set(force_text(value) for value in data)
         return data_set != initial_set
 
 
@@ -970,6 +974,11 @@ class MultiValueField(Field):
                 # by those individual fields.
                 f.required = False
         self.fields = fields
+
+    def __deepcopy__(self, memo):
+        result = super(MultiValueField, self).__deepcopy__(memo)
+        result.fields = tuple([x.__deepcopy__(memo) for x in self.fields])
+        return result
 
     def validate(self, value):
         pass
@@ -1135,6 +1144,11 @@ class SplitDateTimeField(MultiValueField):
 
 class IPAddressField(CharField):
     default_validators = [validators.validate_ipv4_address]
+
+    def __init__(self, *args, **kwargs):
+        warnings.warn("IPAddressField has been deprecated. Use GenericIPAddressField instead.",
+                      PendingDeprecationWarning)
+        super(IPAddressField, self).__init__(*args, **kwargs)
 
     def to_python(self, value):
         if value in self.empty_values:

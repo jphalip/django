@@ -219,10 +219,10 @@ through the ``Form.non_field_errors()`` method.
 
 When you really do need to attach the error to a particular field, you should
 store (or amend) a key in the ``Form._errors`` attribute. This attribute is an
-instance of a ``django.forms.util.ErrorDict`` class. Essentially, though, it's
+instance of a ``django.forms.utils.ErrorDict`` class. Essentially, though, it's
 just a dictionary. There is a key in the dictionary for each field in the form
 that has an error. Each value in the dictionary is a
-``django.forms.util.ErrorList`` instance, which is a list that knows how to
+``django.forms.utils.ErrorList`` instance, which is a list that knows how to
 display itself in different ways. So you can treat ``_errors`` as a dictionary
 mapping field names to lists.
 
@@ -266,9 +266,12 @@ Using validators
 ~~~~~~~~~~~~~~~~
 
 Django's form (and model) fields support use of simple utility functions and
-classes known as validators. These can be passed to a field's constructor, via
-the field's ``validators`` argument, or defined on the Field class itself with
-the ``default_validators`` attribute.
+classes known as validators. A validator is merely a callable object or
+function that takes a value and simply returns nothing if the value is valid or
+raises a :exc:`~django.core.exceptions.ValidationError` if not. These can be
+passed to a field's constructor, via the field's ``validators`` argument, or
+defined on the :class:`~django.forms.Field` class itself with the
+``default_validators`` attribute.
 
 Simple validators can be used to validate values inside the field, let's have
 a look at Django's ``SlugField``::
@@ -289,6 +292,13 @@ is equivalent to::
 
     slug = forms.CharField(validators=[validators.validate_slug])
 
+Common cases such as validating against an email or a regular expression can be
+handled using existing validator classes available in Django. For example,
+``validators.validate_slug`` is an instance of
+a :class:`~django.core.validators.RegexValidator` constructed with the first
+argument being the pattern: ``^[-a-zA-Z0-9_]+$``. See the section on
+:doc:`writing validators </ref/validators>` to see a list of what is already
+available and for an example of how to write a validator.
 
 Form field default cleaning
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -403,6 +413,12 @@ example::
                     raise forms.ValidationError("Did not send for 'help' in "
                             "the subject despite CC'ing yourself.")
 
+.. versionchanged:: 1.7
+
+    In previous versions of Django, ``form.clean()`` was required to return
+    a dictionary of ``cleaned_data``. This method may still return a dictionary
+    of data to be used, but it's no longer required.
+
 In this code, if the validation error is raised, the form will display an
 error message at the top of the form (normally) describing the problem.
 
@@ -450,11 +466,5 @@ entries in ``_errors``.
 
 Secondly, once we have decided that the combined data in the two fields we are
 considering aren't valid, we must remember to remove them from the
-``cleaned_data``.
-
-.. versionchanged:: 1.5
-
-    Django used to remove the ``cleaned_data`` attribute entirely if there were
-    any errors in the form. Since version 1.5, ``cleaned_data`` is present even if
-    the form doesn't validate, but it contains only field values that did
-    validate.
+``cleaned_data``. `cleaned_data`` is present even if the form doesn't
+validate, but it contains only field values that did validate.

@@ -101,6 +101,34 @@ Other topics
 
             admin.site.register(Author)
 
+The register decorator
+----------------------
+
+.. function:: register(*models, [site=django.admin.sites.site])
+
+    .. versionadded:: 1.7
+
+    There is also a decorator for registering your ``ModelAdmin`` classes::
+
+        from django.contrib import admin
+        from .models import Author
+
+        @admin.register(Author)
+        class AuthorAdmin(admin.ModelAdmin):
+            pass
+
+    It is given one or more model classes to register with the ``ModelAdmin``
+    and an optional keyword argument ``site`` if you are not using the default
+    ``AdminSite``::
+
+        from django.contrib import admin
+        from .models import Author, Reader, Editor
+        from myproject.admin_site import custom_admin_site
+
+        @admin.register(Author, Reader, Editor, site=custom_admin_site)
+        class PersonAdmin(admin.ModelAdmin):
+            pass
+
 ``ModelAdmin`` options
 ----------------------
 
@@ -426,7 +454,7 @@ subclass::
 .. attribute:: ModelAdmin.inlines
 
     See :class:`InlineModelAdmin` objects below as well as
-    :meth:`ModelAdmin.get_formsets`.
+    :meth:`ModelAdmin.get_formsets_with_inlines`.
 
 .. attribute:: ModelAdmin.list_display
 
@@ -1235,8 +1263,6 @@ templates used by the :class:`ModelAdmin` views:
 
 .. method:: ModelAdmin.get_list_filter(self, request)
 
-    .. versionadded:: 1.5
-
     The ``get_list_filter`` method is given the ``HttpRequest`` and is expected
     to return the same kind of sequence type as for the
     :attr:`~ModelAdmin.list_filter` attribute.
@@ -1250,8 +1276,6 @@ templates used by the :class:`ModelAdmin` views:
     :attr:`~ModelAdmin.search_fields` attribute.
 
 .. method:: ModelAdmin.get_inline_instances(self, request, obj=None)
-
-    .. versionadded:: 1.5
 
     The ``get_inline_instances`` method is given the ``HttpRequest`` and the
     ``obj`` being edited (or ``None`` on an add form) and is expected to return
@@ -1341,7 +1365,10 @@ templates used by the :class:`ModelAdmin` views:
 
 .. method:: ModelAdmin.get_formsets(self, request, obj=None)
 
-    Yields :class:`InlineModelAdmin`\s for use in admin add and change views.
+    .. deprecated:: 1.7
+        Use :meth:`get_formsets_with_inlines()` instead.
+
+    Yields  :class:`InlineModelAdmin`\s for use in admin add and change views.
 
     For example if you wanted to display a particular inline only in the change
     view, you could override ``get_formsets`` as follows::
@@ -1355,6 +1382,24 @@ templates used by the :class:`ModelAdmin` views:
                     if isinstance(inline, MyInline) and obj is None:
                         continue
                     yield inline.get_formset(request, obj)
+
+.. method:: ModelAdmin.get_formsets_with_inlines(self, request, obj=None)
+
+    Yields (``FormSet``, :class:`InlineModelAdmin`) pairs for use in admin add
+    and change views.
+
+    For example if you wanted to display a particular inline only in the change
+    view, you could override ``get_formsets_with_inlines`` as follows::
+
+        class MyModelAdmin(admin.ModelAdmin):
+            inlines = [MyInline, SomeOtherInline]
+
+            def get_formsets_with_inlines(self, request, obj=None):
+                for inline in self.get_inline_instances(request, obj):
+                    # hide MyInline in the add view
+                    if isinstance(inline, MyInline) and obj is None:
+                        continue
+                    yield inline.get_formset(request, obj), inline
 
 .. method:: ModelAdmin.formfield_for_foreignkey(self, db_field, request, **kwargs)
 
@@ -1506,10 +1551,6 @@ templates used by the :class:`ModelAdmin` views:
     Sends a message to the user using the :mod:`django.contrib.messages`
     backend.  See the :ref:`custom ModelAdmin example <custom-admin-action>`.
 
-    .. versionchanged:: 1.5
-
-        Keyword arguments were added in Django 1.5.
-
     Keyword arguments allow you to change the message level, add extra CSS
     tags, or fail silently if the ``contrib.messages`` framework is not
     installed. These keyword arguments match those for
@@ -1521,6 +1562,40 @@ templates used by the :class:`ModelAdmin` views:
 
     Returns an instance of the paginator to use for this view. By default,
     instantiates an instance of :attr:`paginator`.
+
+.. method:: ModelAdmin.response_add(self, request, obj, post_url_continue=None)
+
+    Determines the :class:`~django.http.HttpResponse` for the
+    :meth:`add_view` stage.
+
+    ``response_add`` is called after the admin form is submitted and
+    just after the object and all the related instances have
+    been created and saved. You can override it to change the default behavior
+    after the object has been created.
+
+.. method:: ModelAdmin.response_change(self, request, obj)
+
+    Determines the :class:`~django.http.HttpResponse` for the
+    :meth:`change_view` stage.
+
+    ``response_change`` is called after the admin form is submitted and
+    just after the object and all the related instances have
+    been saved. You can override it to change the default
+    behavior after the object has been changedn.
+
+.. method:: ModelAdmin.response_delete(self, request, obj_display)
+
+    .. versionadded:: 1.7
+
+    Determines the :class:`~django.http.HttpResponse` for the
+    :meth:`delete_view` stage.
+
+    ``response_delete`` is called after the object has been
+    deleted. You can override it to change the default
+    behavior after the object has been deleted.
+
+    ``obj_display`` is a string with the name of the deleted
+    object.
 
 Other methods
 ~~~~~~~~~~~~~
@@ -2170,7 +2245,7 @@ creating your own ``AdminSite`` instance (see below), and changing the
     Python class), and register your models and ``ModelAdmin`` subclasses
     with it instead of using the default.
 
-    When constructing an instance of an ``AdminSite``, you are able to provide
+    When constructing an instance of an ``AdminSite``, you can provide
     a unique instance name using the ``name`` argument to the constructor. This
     instance name is used to identify the instance, especially when
     :ref:`reversing admin URLs <admin-reverse-urls>`. If no instance name is
@@ -2181,6 +2256,27 @@ creating your own ``AdminSite`` instance (see below), and changing the
 
 Templates can override or extend base admin templates as described in
 `Overriding Admin Templates`_.
+
+.. attribute:: AdminSite.site_header
+
+    .. versionadded:: 1.7
+
+    The text to put at the top of each admin page, as an ``<h1>`` (a string).
+    By default, this is "Django administration".
+
+.. attribute:: AdminSite.site_title
+
+    .. versionadded:: 1.7
+
+    The text to put at the end of each admin page's ``<title>`` (a string). By
+    default, this is "Django site admin".
+
+.. attribute:: AdminSite.index_title
+
+    .. versionadded:: 1.7
+
+    The text to put at the top of the admin index page (a string). By default,
+    this is "Site administration".
 
 .. attribute:: AdminSite.index_template
 

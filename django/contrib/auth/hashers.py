@@ -95,7 +95,7 @@ def load_hashers(password_hashers=None):
             raise ImproperlyConfigured("hasher doesn't specify an "
                                        "algorithm name: %s" % backend)
         hashers.append(hasher)
-    HASHERS = dict([(hasher.algorithm, hasher) for hasher in hashers])
+    HASHERS = dict((hasher.algorithm, hasher) for hasher in hashers)
     PREFERRED_HASHER = hashers[0]
 
 
@@ -192,7 +192,7 @@ class BasePasswordHasher(object):
         """
         Checks if the given password is correct
         """
-        raise NotImplementedError()
+        raise NotImplementedError('subclasses of BasePasswordHasher must provide a verify() method')
 
     def encode(self, password, salt):
         """
@@ -201,7 +201,7 @@ class BasePasswordHasher(object):
         The result is normally formatted as "algorithm$salt$hash" and
         must be fewer than 128 characters.
         """
-        raise NotImplementedError()
+        raise NotImplementedError('subclasses of BasePasswordHasher must provide an encode() method')
 
     def safe_summary(self, encoded):
         """
@@ -210,19 +210,19 @@ class BasePasswordHasher(object):
         The result is a dictionary and will be used where the password field
         must be displayed to construct a safe representation of the password.
         """
-        raise NotImplementedError()
+        raise NotImplementedError('subclasses of BasePasswordHasher must provide a safe_summary() method')
 
 
 class PBKDF2PasswordHasher(BasePasswordHasher):
     """
     Secure password hashing using the PBKDF2 algorithm (recommended)
 
-    Configured to use PBKDF2 + HMAC + SHA256 with 10000 iterations.
+    Configured to use PBKDF2 + HMAC + SHA256 with 12000 iterations.
     The result is a 64 byte binary string.  Iterations may be changed
     safely but you must rename the algorithm if you change SHA256.
     """
     algorithm = "pbkdf2_sha256"
-    iterations = 10000
+    iterations = 12000
     digest = hashlib.sha256
 
     def encode(self, password, salt, iterations=None):

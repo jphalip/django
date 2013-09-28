@@ -94,7 +94,8 @@ class DatabaseErrorWrapper(object):
                 six.reraise(dj_exc_type, dj_exc_value, traceback)
 
     def __call__(self, func):
-        @wraps(func)
+        # Note that we are intentionally not using @wraps here for performance
+        # reasons. Refs #21109.
         def inner(*args, **kwargs):
             with self:
                 return func(*args, **kwargs)
@@ -262,10 +263,13 @@ class ConnectionRouter(object):
                     return allow
         return obj1._state.db == obj2._state.db
 
-    def allow_syncdb(self, db, model):
+    def allow_migrate(self, db, model):
         for router in self.routers:
             try:
-                method = router.allow_syncdb
+                try:
+                    method = router.allow_migrate
+                except AttributeError:
+                    method = router.allow_syncdb
             except AttributeError:
                 # If the router doesn't have a method, skip to the next one.
                 pass

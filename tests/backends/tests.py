@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 
 import datetime
 from decimal import Decimal
+import re
 import threading
 import unittest
 
@@ -14,7 +15,7 @@ from django.db import (connection, connections, DEFAULT_DB_ALIAS,
 from django.db.backends.signals import connection_created
 from django.db.backends.sqlite3.base import DatabaseOperations
 from django.db.backends.postgresql_psycopg2 import version as pg_version
-from django.db.backends.util import format_number
+from django.db.backends.utils import format_number, CursorWrapper
 from django.db.models import Sum, Avg, Variance, StdDev
 from django.db.models.fields import (AutoField, DateField, DateTimeField,
     DecimalField, IntegerField, TimeField)
@@ -79,7 +80,7 @@ class OracleChecks(unittest.TestCase):
         # than 4000 chars and read it properly
         c = connection.cursor()
         c.execute('CREATE TABLE ltext ("TEXT" NCLOB)')
-        long_str = ''.join([six.text_type(x) for x in xrange(4000)])
+        long_str = ''.join(six.text_type(x) for x in xrange(4000))
         c.execute('INSERT INTO ltext VALUES (%s)', [long_str])
         c.execute('SELECT text FROM ltext')
         row = c.fetchone()
@@ -106,6 +107,25 @@ class OracleChecks(unittest.TestCase):
         # wasn't the case.
         c.execute(query)
         self.assertEqual(c.fetchone()[0], 1)
+
+
+class SQLiteTests(TestCase):
+    longMessage = True
+
+    @unittest.skipUnless(connection.vendor == 'sqlite',
+                        "Test valid only for SQLite")
+    def test_autoincrement(self):
+        """
+        Check that auto_increment fields are created with the AUTOINCREMENT
+        keyword in order to be monotonically increasing. Refs #10164.
+        """
+        statements = connection.creation.sql_create_model(models.Square,
+            style=no_style())
+        match = re.search('"id" ([^,]+),', statements[0][0])
+        self.assertIsNotNone(match)
+        self.assertEqual('integer NOT NULL PRIMARY KEY AUTOINCREMENT',
+            match.group(1), "Wrong SQL used to create an auto-increment "
+            "column on SQLite")
 
 
 class MySQLTests(TestCase):
@@ -403,7 +423,7 @@ class EscapingChecks(TestCase):
         self.assertEqual(cursor.fetchall()[0], ('%', '%d'))
 
     @unittest.skipUnless(connection.vendor == 'sqlite',
-                         "This is a sqlite-specific issue")
+                         "This is an sqlite-specific issue")
     def test_sqlite_parameter_escaping(self):
         #13648: '%s' escaping support for sqlite3
         cursor = connection.cursor()
@@ -592,6 +612,29 @@ class BackendTestCase(TestCase):
         query = 'CREATE TABLE %s (id INTEGER);' % models.Article._meta.db_table
         with self.assertRaises(DatabaseError):
             cursor.execute(query)
+
+    def test_cursor_contextmanager(self):
+        """
+        Test that cursors can be used as a context manager
+        """
+        with connection.cursor() as cursor:
+            self.assertTrue(isinstance(cursor, CursorWrapper))
+        # Both InterfaceError and ProgrammingError seem to be used when
+        # accessing closed cursor (psycopg2 has InterfaceError, rest seem
+        # to use ProgrammingError).
+        with self.assertRaises(connection.features.closed_cursor_error_class):
+            # cursor should be closed, so no queries should be possible.
+            cursor.execute("select 1")
+
+    @unittest.skipUnless(connection.vendor == 'postgresql',
+                         "Psycopg2 specific cursor.closed attribute needed")
+    def test_cursor_contextmanager_closing(self):
+        # There isn't a generic way to test that cursors are closed, but
+        # psycopg2 offers us a way to check that by closed attribute.
+        # So, run only on psycopg2 for that reason.
+        with connection.cursor() as cursor:
+            self.assertTrue(isinstance(cursor, CursorWrapper))
+        self.assertTrue(cursor.closed)
 
 
 # We don't make these tests conditional because that means we would need to
@@ -943,3 +986,23 @@ class BackendUtilTests(TestCase):
               '0.1')
         equal('0.1234567890', 12, 0,
               '0')
+
+@unittest.skipUnless(
+    connection.vendor == 'postgresql',
+    "This test applies only to PostgreSQL")
+class UnicodeArrayTestCase(TestCase):
+
+    def select(self, val):
+        cursor = connection.cursor()
+        cursor.execute("select %s", (val,))
+        return cursor.fetchone()[0]
+
+    def test_select_ascii_array(self):
+        a = ["awef"]
+        b = self.select(a)
+        self.assertEqual(a[0], b[0])
+
+    def test_select_unicode_array(self):
+        a = ["ᄲawef"]
+        b = self.select(a)
+        self.assertEqual(a[0], b[0])

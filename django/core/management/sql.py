@@ -9,7 +9,6 @@ from django.conf import settings
 from django.core.management.base import CommandError
 from django.db import models
 from django.db.models import get_models
-from django.utils._os import upath
 
 
 def sql_create(app, style, connection):
@@ -29,7 +28,7 @@ def sql_create(app, style, connection):
     app_models = models.get_models(app, include_auto_created=True)
     final_output = []
     tables = connection.introspection.table_names()
-    known_models = set([model for model in connection.introspection.installed_models(tables) if model not in app_models])
+    known_models = set(model for model in connection.introspection.installed_models(tables) if model not in app_models)
     pending_references = {}
 
     for model in app_models:
@@ -206,25 +205,25 @@ def custom_sql_for_model(model, style, connection):
     return output
 
 
-def emit_pre_sync_signal(create_models, verbosity, interactive, db):
-    # Emit the pre_sync signal for every application.
+def emit_pre_migrate_signal(create_models, verbosity, interactive, db):
+    # Emit the pre_migrate signal for every application.
     for app in models.get_apps():
         app_name = app.__name__.split('.')[-2]
         if verbosity >= 2:
-            print("Running pre-sync handlers for application %s" % app_name)
-        models.signals.pre_syncdb.send(sender=app, app=app,
+            print("Running pre-migrate handlers for application %s" % app_name)
+        models.signals.pre_migrate.send(sender=app, app=app,
                                        create_models=create_models,
                                        verbosity=verbosity,
                                        interactive=interactive,
                                        db=db)
 
 
-def emit_post_sync_signal(created_models, verbosity, interactive, db):
-    # Emit the post_sync signal for every application.
+def emit_post_migrate_signal(created_models, verbosity, interactive, db):
+    # Emit the post_migrate signal for every application.
     for app in models.get_apps():
         app_name = app.__name__.split('.')[-2]
         if verbosity >= 2:
-            print("Running post-sync handlers for application %s" % app_name)
-        models.signals.post_syncdb.send(sender=app, app=app,
+            print("Running post-migrate handlers for application %s" % app_name)
+        models.signals.post_migrate.send(sender=app, app=app,
             created_models=created_models, verbosity=verbosity,
             interactive=interactive, db=db)

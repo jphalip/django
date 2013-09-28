@@ -16,6 +16,7 @@ from django.contrib.sessions.backends.signed_cookies import SessionStore as Cook
 from django.contrib.sessions.models import Session
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.core.cache import get_cache
+from django.core.cache.backends.base import InvalidCacheBackendError
 from django.core import management
 from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponse
@@ -285,21 +286,25 @@ class SessionTestsMixin(object):
 
 
     def test_actual_expiry(self):
-        # Regression test for #19200
-        old_session_key = None
-        new_session_key = None
-        try:
-            self.session['foo'] = 'bar'
-            self.session.set_expiry(-timedelta(seconds=10))
-            self.session.save()
-            old_session_key = self.session.session_key
-            # With an expiry date in the past, the session expires instantly.
-            new_session = self.backend(self.session.session_key)
-            new_session_key = new_session.session_key
-            self.assertNotIn('foo', new_session)
-        finally:
-            self.session.delete(old_session_key)
-            self.session.delete(new_session_key)
+        # this doesn't work with JSONSerializer (serializing timedelta)
+        with override_settings(SESSION_SERIALIZER='django.contrib.sessions.serializers.PickleSerializer'):
+            self.session = self.backend()  # reinitialize after overriding settings
+
+            # Regression test for #19200
+            old_session_key = None
+            new_session_key = None
+            try:
+                self.session['foo'] = 'bar'
+                self.session.set_expiry(-timedelta(seconds=10))
+                self.session.save()
+                old_session_key = self.session.session_key
+                # With an expiry date in the past, the session expires instantly.
+                new_session = self.backend(self.session.session_key)
+                new_session_key = new_session.session_key
+                self.assertNotIn('foo', new_session)
+            finally:
+                self.session.delete(old_session_key)
+                self.session.delete(new_session_key)
 
 
 class DatabaseSessionTests(SessionTestsMixin, TestCase):
@@ -382,6 +387,11 @@ class CacheDBSessionTests(SessionTestsMixin, TestCase):
             self.session._session_key = (string.ascii_letters + string.digits) * 20
             self.assertEqual(self.session.load(), {})
 
+    @override_settings(SESSION_CACHE_ALIAS='sessions')
+    def test_non_default_cache(self):
+        #21000 - CacheDB backend should respect SESSION_CACHE_ALIAS.
+        self.assertRaises(InvalidCacheBackendError, self.backend)
+
 
 @override_settings(USE_TZ=True)
 class CacheDBSessionWithTimeZoneTests(CacheDBSessionTests):
@@ -413,10 +423,6 @@ class FileSessionTests(SessionTestsMixin, unittest.TestCase):
         del self.backend._storage_path
         # Make sure the file backend checks for a good storage dir
         self.assertRaises(ImproperlyConfigured, self.backend)
-
-    def test_invalid_key_backslash(self):
-        # This key should be refused and a new session should be created
-        self.assertTrue(self.backend("a\\b\\c").load())
 
     def test_invalid_key_backslash(self):
         # Ensure we don't allow directory-traversal.

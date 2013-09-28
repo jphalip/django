@@ -142,7 +142,7 @@ Methods
         .. versionchanged:: 1.6
 
             In Django 1.4 and 1.5, a blank string was unintentionally stored
-            as an unsable password.
+            as an unusable password.
 
     .. method:: check_password(raw_password)
 
@@ -388,8 +388,6 @@ can be used for notification when a user logs in or out.
         user was not authenticated.
 
 .. function:: user_login_failed
-
-    .. versionadded:: 1.5
 
     Sent when the user failed to login successfully
 

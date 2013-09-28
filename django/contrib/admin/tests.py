@@ -6,7 +6,7 @@ import sys
 import types
 from unittest import SkipTest
 
-from django.test import LiveServerTestCase
+from django.contrib.staticfiles.testing import StaticLiveServerCase
 from django.utils.module_loading import import_by_path
 from django.utils.translation import ugettext as _
 
@@ -37,7 +37,7 @@ class AdminSeleniumMetaClass(type):
         return type.__new__(cls, name, bases, attrs)
 
 
-class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
+class AdminSeleniumWebDriverTestCase(StaticLiveServerCase):
     __metaclass__ = AdminSeleniumMetaClass
 
     available_apps = [
@@ -136,8 +136,6 @@ class AdminSeleniumWebDriverTestCase(LiveServerTestCase):
             self.selenium = Remote(
                 command_executor='http://%s@%s/wd/hub' % (auth, hub),
                 desired_capabilities=capabilities)
-
-        super(AdminSeleniumWebDriverTestCase, self).setUp()
 
     def tearDown(self):
         if hasattr(self, 'selenium'):

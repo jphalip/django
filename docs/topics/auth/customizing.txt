@@ -275,7 +275,7 @@ can or cannot do with Task instances, specific to your application::
             )
 
 The only thing this does is create those extra permissions when you run
-:djadmin:`manage.py syncdb <syncdb>`. Your code is in charge of checking the
+:djadmin:`manage.py migrate <migrate>`. Your code is in charge of checking the
 value of these permissions when an user is trying to access the functionality
 provided by the application (viewing tasks, changing the status of tasks,
 closing tasks.) Continuing the above example, the following checks if a user may
@@ -359,8 +359,6 @@ the extra database load.
 Substituting a custom User model
 ================================
 
-.. versionadded:: 1.5
-
 Some kinds of projects may have authentication requirements for which Django's
 built-in :class:`~django.contrib.auth.models.User` model is not always
 appropriate. For instance, on some sites it makes more sense to use an email
@@ -380,14 +378,12 @@ use as your User model.
    Changing :setting:`AUTH_USER_MODEL` has a big effect on your database
    structure. It changes the tables that are available, and it will affect the
    construction of foreign keys and many-to-many relationships. If you intend
-   to set :setting:`AUTH_USER_MODEL`, you should set it before running
-   ``manage.py syncdb`` for the first time.
+   to set :setting:`AUTH_USER_MODEL`, you should set it before creating
+   any migrations or running ``manage.py migrate`` for the first time.
 
-   If you have an existing project and you want to migrate to using a custom
-   User model, you may need to look into using a migration tool like South_
-   to ease the transition.
-
-.. _South: http://south.aeracode.org
+   Changing this setting after you have tables created is not supported
+   by :djadmin:`makemigrations` and will result in you having to manually
+   write a set of migrations to fix your schema.
 
 Referencing the User model
 --------------------------
@@ -474,13 +470,15 @@ password resets. You must then provide some key implementation details:
 
     .. attribute:: REQUIRED_FIELDS
 
-        A list of the field names that *must* be provided when creating a user
-        via the :djadmin:`createsuperuser` management command. The user will be
-        prompted to supply a value for each of these fields. It should include
-        any field for which :attr:`~django.db.models.Field.blank` is ``False``
-        or undefined, but may include additional fields you want prompted for
-        when a user is created interactively. However, it will not work for
-        :class:`~django.db.models.ForeignKey` fields.
+        A list of the field names that will be prompted for when creating a
+        user via the :djadmin:`createsuperuser` management command. The user
+        will be prompted to supply a value for each of these fields. It must
+        include any field for which :attr:`~django.db.models.Field.blank` is
+        ``False`` or undefined and may include additional fields you want
+        prompted for when a user is created interactively. However, it will not
+        work for :class:`~django.db.models.ForeignKey` fields.
+        ``REQUIRED_FIELDS`` has no effect in other parts of Django, like
+        creating a user in the admin.
 
         For example, here is the partial definition for a ``User`` model that
         defines two required fields - a date of birth and height::
@@ -871,8 +869,7 @@ would test three possible User models -- the default, plus the two User
 models provided by ``auth`` app::
 
     from django.contrib.auth.tests.utils import skipIfCustomUser
-    from django.test import TestCase
-    from django.test.utils import override_settings
+    from django.test import TestCase, override_settings
 
 
     class ApplicationTestCase(TestCase):
