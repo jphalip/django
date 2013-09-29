@@ -128,15 +128,85 @@ Going beyond that, you can specify an individual test method like this:
 Running the Selenium tests
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Some admin tests require Selenium 2, Firefox and Python >= 2.6 to work via a
-real Web browser. To allow those tests to run and not be skipped, you must
-install the selenium_ package (version > 2.13) into your Python path and run
-the tests with the ``--selenium`` option:
+Locally
+_______
+
+Some admin tests require Selenium, Firefox and Python >= 2.6 to work via a
+real, local Web browser. To allow those tests to run and not be skipped, you
+must install the selenium_ package (version > 2.35) into your Python path and
+run the tests with the ``--selenium=<BROWSER>`` option. For example, using
+Firefox (``--selenium=ff``):
 
 .. code-block:: bash
 
-    ./runtests.py --settings=test_sqlite --selenium admin_inlines
+    ./runtests.py --settings=test_sqlite --selenium=ff admin_views.tests.SeleniumTests
 
+Depending on which browsers are installed on your system, you may use the
+following values for the ``--selenium`` option:
+
+* ``ff``: Firefox
+* ``op``: Opera
+* ``ie``: Internet Explorer
+* ``gc``: Google Chrome
+* ``pj``: PhantomJS
+
+Remotely
+________
+
+You may also run the Selenium tests on the `Sauce Labs`_ platform, which allows
+using a wide range of browsers and operating systems.
+
+First, you need to download `Sauce Connect`_ and then run it with Java as
+follows:
+
+.. code-block:: bash
+
+    java -jar Sauce-Connect.jar djangoproject 195429ab-c384-40dc-b9dd-63ca850b53c6
+
+Then you need to use the ``--selenium-remote`` option and set the
+``REMOTE_USER`` and ``REMOTE_USER`` environment variables. The ``--selenium``
+option may then be used to specify the browser type, the browser version and
+the operating system. For example:
+
+.. code-block:: bash
+
+    REMOTE_USER=djangoproject REMOTE_KEY=195429ab-c384-40dc-b9dd-63ca850b53c6 ./runtests.py --settings=test_sqlite admin_views.tests.SeleniumTests.test_prepopulated_fields --selenium=ff --selenium-remote
+
+The tests can then be viewed online at: https://saucelabs.com/u/djangoproject
+
+The available operating systems are:
+
+* ``s``: Windows 8
+* ``x``: Windows 7
+* ``e``: Windows xp
+* ``l``: Linux
+* ``m``: Mac OSX 10.6 (Snow Leopard)
+* ``i``: Mac OSX 10.8 (Mountain Lion)
+
+The available browsers are:
+
+* ``ff``: Firefox
+* ``op``: Opera
+* ``ie``: Internet Explorer
+* ``gc``: Google Chrome
+* ``sa``: Safari
+* ``ip``: iPad
+* ``ih``: iPhone
+* ``an``: Android
+
+Here are some possible combinations:
+
+* ``--selenium=ff19l``: Firefox 19 on Linux
+* ``--selenium=ie8e``: Internet Explorer on Windows XP
+* ``--selenium=sa5m``: Safari 5 on Mac OSX 10.6
+* ``--selenium=ihi``: iPhone simulator on Mac OSX 10.8
+
+For the full list of possible browser/OS combinations, please refer to
+the `dedicated page on Sauce Labs`_.
+
+.. _`Sauce Labs`: https://saucelabs.com
+.. _`Sauce Connect`: https://saucelabs.com/docs/connect
+.. _`dedicated page on Sauce Labs`: https://saucelabs.com/docs/platforms
 
 .. _running-unit-tests-dependencies:
 

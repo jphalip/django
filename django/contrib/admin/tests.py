@@ -54,9 +54,9 @@ class AdminSeleniumWebDriverTestCase(StaticLiveServerCase):
         given browser spec.
         """
         platforms = {
-            's': 'Windows 2008',
-            'x': 'Windows 2003',
-            'e': 'Windows 2012',
+            's': 'Windows 8',
+            'x': 'Windows 7',
+            'e': 'Windows XP',
             'l': 'Linux',
             'm': 'Mac 10.6',
             'i': 'Mac 10.8'
