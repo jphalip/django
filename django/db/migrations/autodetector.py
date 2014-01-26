@@ -1,10 +1,9 @@
 import re
-import sys
-from django.utils import datetime_safe
-from django.utils.six.moves import input
+import datetime
+
 from django.db.migrations import operations
 from django.db.migrations.migration import Migration
-from django.db.models.loading import cache
+from django.db.migrations.questioner import MigrationQuestioner
 
 
 class MigrationAutodetector(object):
@@ -48,19 +47,19 @@ class MigrationAutodetector(object):
         """
         # We'll store migrations as lists by app names for now
         self.migrations = {}
-        old_app_cache = self.from_state.render()
-        new_app_cache = self.to_state.render()
+        old_apps = self.from_state.render()
+        new_apps = self.to_state.render()
         # Prepare lists of old/new model keys that we care about
         # (i.e. ignoring proxy ones)
         old_model_keys = [
             (al, mn)
             for al, mn in self.from_state.models.keys()
-            if not old_app_cache.get_model(al, mn)._meta.proxy
+            if not old_apps.get_model(al, mn)._meta.proxy
         ]
         new_model_keys = [
             (al, mn)
             for al, mn in self.to_state.models.keys()
-            if not new_app_cache.get_model(al, mn)._meta.proxy
+            if not new_apps.get_model(al, mn)._meta.proxy
         ]
         # Adding models. Phase 1 is adding models with no outward relationships.
         added_models = set(new_model_keys) - set(old_model_keys)
@@ -69,22 +68,22 @@ class MigrationAutodetector(object):
             model_state = self.to_state.models[app_label, model_name]
             # Are there any relationships out from this model? if so, punt it to the next phase.
             related_fields = []
-            for field in new_app_cache.get_model(app_label, model_name)._meta.fields:
+            for field in new_apps.get_model(app_label, model_name)._meta.local_fields:
                 if field.rel:
                     if field.rel.to:
-                        related_fields.append((field.name, field.rel.to._meta.app_label.lower(), field.rel.to._meta.object_name.lower()))
+                        related_fields.append((field.name, field.rel.to._meta.app_label, field.rel.to._meta.model_name))
                     if hasattr(field.rel, "through") and not field.rel.though._meta.auto_created:
-                        related_fields.append((field.name, field.rel.through._meta.app_label.lower(), field.rel.through._meta.object_name.lower()))
+                        related_fields.append((field.name, field.rel.through._meta.app_label, field.rel.through._meta.model_name))
             if related_fields:
                 pending_add[app_label, model_name] = related_fields
             else:
                 self.add_to_migration(
                     app_label,
                     operations.CreateModel(
-                        name = model_state.name,
-                        fields = model_state.fields,
-                        options = model_state.options,
-                        bases = model_state.bases,
+                        name=model_state.name,
+                        fields=model_state.fields,
+                        options=model_state.options,
+                        bases=model_state.bases,
                     )
                 )
         # Phase 2 is progressively adding pending models, splitting up into two
@@ -99,15 +98,19 @@ class MigrationAutodetector(object):
                 self.add_to_migration(
                     app_label,
                     operations.CreateModel(
-                        name = model_state.name,
-                        fields = model_state.fields,
-                        options = model_state.options,
-                        bases = model_state.bases,
+                        name=model_state.name,
+                        fields=model_state.fields,
+                        options=model_state.options,
+                        bases=model_state.bases,
                     )
                 )
                 for field_name, other_app_label, other_model_name in related_fields:
-                    if app_label != other_app_label:
-                        self.add_dependency(app_label, other_app_label)
+                    # If it depends on a swappable something, add a dynamic depend'cy
+                    swappable_setting = new_apps.get_model(app_label, model_name)._meta.get_field_by_name(field_name)[0].swappable_setting
+                    if swappable_setting is not None:
+                        self.add_swappable_dependency(app_label, swappable_setting)
+                    elif app_label != other_app_label:
+                            self.add_dependency(app_label, other_app_label)
                 del pending_add[app_label, model_name]
             # Ah well, we'll need to split one. Pick deterministically.
             else:
@@ -119,10 +122,10 @@ class MigrationAutodetector(object):
                 self.add_to_migration(
                     app_label,
                     operations.CreateModel(
-                        name = model_state.name,
-                        fields = [(n, f) for n, f in model_state.fields if n not in bad_fields],
-                        options = model_state.options,
-                        bases = model_state.bases,
+                        name=model_state.name,
+                        fields=[(n, f) for n, f in model_state.fields if n not in bad_fields],
+                        options=model_state.options,
+                        bases=model_state.bases,
                     )
                 )
                 # Add the bad fields to be made in a phase 3
@@ -135,13 +138,17 @@ class MigrationAutodetector(object):
             self.add_to_migration(
                 app_label,
                 operations.AddField(
-                    model_name = model_name,
-                    name = field_name,
-                    field = model_state.get_field_by_name(field_name),
+                    model_name=model_name,
+                    name=field_name,
+                    field=model_state.get_field_by_name(field_name),
                 ),
-                new = True,
+                new=True,
             )
-            if app_label != other_app_label:
+            # If it depends on a swappable something, add a dynamic depend'cy
+            swappable_setting = new_apps.get_model(app_label, model_name)._meta.get_field_by_name(field_name)[0].swappable_setting
+            if swappable_setting is not None:
+                self.add_swappable_dependency(app_label, swappable_setting)
+            elif app_label != other_app_label:
                 self.add_dependency(app_label, other_app_label)
         # Removing models
         removed_models = set(old_model_keys) - set(new_model_keys)
@@ -155,75 +162,97 @@ class MigrationAutodetector(object):
             )
         # Changes within models
         kept_models = set(old_model_keys).intersection(new_model_keys)
+        old_fields = set()
+        new_fields = set()
         for app_label, model_name in kept_models:
             old_model_state = self.from_state.models[app_label, model_name]
             new_model_state = self.to_state.models[app_label, model_name]
-            # New fields
-            old_field_names = set(x for x, y in old_model_state.fields)
-            new_field_names = set(x for x, y in new_model_state.fields)
-            for field_name in new_field_names - old_field_names:
-                field = new_model_state.get_field_by_name(field_name)
-                # Scan to see if this is actually a rename!
-                field_dec = field.deconstruct()[1:]
-                found_rename = False
-                for removed_field_name in (old_field_names - new_field_names):
-                    if old_model_state.get_field_by_name(removed_field_name).deconstruct()[1:] == field_dec:
-                        if self.questioner.ask_rename(model_name, removed_field_name, field_name, field):
-                            self.add_to_migration(
-                                app_label,
-                                operations.RenameField(
-                                    model_name = model_name,
-                                    old_name = removed_field_name,
-                                    new_name = field_name,
-                                )
-                            )
-                            old_field_names.remove(removed_field_name)
-                            new_field_names.remove(field_name)
-                            found_rename = True
-                            break
-                if found_rename:
-                    continue
-                # You can't just add NOT NULL fields with no default
-                if not field.null and not field.has_default():
-                    field.default = self.questioner.ask_not_null_addition(field_name, model_name)
-                self.add_to_migration(
-                    app_label,
-                    operations.AddField(
-                        model_name = model_name,
-                        name = field_name,
-                        field = field,
-                    )
-                )
-            # Old fields
-            for field_name in old_field_names - new_field_names:
-                self.add_to_migration(
-                    app_label,
-                    operations.RemoveField(
-                        model_name = model_name,
-                        name = field_name,
-                    )
-                )
-            # The same fields
-            for field_name in old_field_names.intersection(new_field_names):
-                # Did the field change?
-                old_field_dec = old_model_state.get_field_by_name(field_name).deconstruct()
-                new_field_dec = new_model_state.get_field_by_name(field_name).deconstruct()
-                if old_field_dec != new_field_dec:
-                    self.add_to_migration(
-                        app_label,
-                        operations.AlterField(
-                            model_name = model_name,
-                            name = field_name,
-                            field = new_model_state.get_field_by_name(field_name),
-                        )
-                    )
-            # unique_together changes
+            # Collect field changes for later global dealing with (so AddFields
+            # always come before AlterFields even on separate models)
+            old_fields.update((app_label, model_name, x) for x, y in old_model_state.fields)
+            new_fields.update((app_label, model_name, x) for x, y in new_model_state.fields)
+            # Unique_together changes
             if old_model_state.options.get("unique_together", set()) != new_model_state.options.get("unique_together", set()):
                 self.add_to_migration(
                     app_label,
                     operations.AlterUniqueTogether(
-                        name = model_name,
-                        unique_together = new_model_state.options.get("unique_together", set()),
+                        name=model_name,
+                        unique_together=new_model_state.options.get("unique_together", set()),
+                    )
+                )
+        # New fields
+        for app_label, model_name, field_name in new_fields - old_fields:
+            old_model_state = self.from_state.models[app_label, model_name]
+            new_model_state = self.to_state.models[app_label, model_name]
+            field = new_model_state.get_field_by_name(field_name)
+            # Scan to see if this is actually a rename!
+            field_dec = field.deconstruct()[1:]
+            found_rename = False
+            for rem_app_label, rem_model_name, rem_field_name in (old_fields - new_fields):
+                if rem_app_label == app_label and rem_model_name == model_name:
+                    if old_model_state.get_field_by_name(rem_field_name).deconstruct()[1:] == field_dec:
+                        if self.questioner.ask_rename(model_name, rem_field_name, field_name, field):
+                            self.add_to_migration(
+                                app_label,
+                                operations.RenameField(
+                                    model_name=model_name,
+                                    old_name=rem_field_name,
+                                    new_name=field_name,
+                                )
+                            )
+                            old_fields.remove((rem_app_label, rem_model_name, rem_field_name))
+                            new_fields.remove((app_label, model_name, field_name))
+                            found_rename = True
+                            break
+            if found_rename:
+                continue
+            # You can't just add NOT NULL fields with no default
+            if not field.null and not field.has_default():
+                field = field.clone()
+                field.default = self.questioner.ask_not_null_addition(field_name, model_name)
+                self.add_to_migration(
+                    app_label,
+                    operations.AddField(
+                        model_name=model_name,
+                        name=field_name,
+                        field=field,
+                        preserve_default=False,
+                    )
+                )
+            else:
+                self.add_to_migration(
+                    app_label,
+                    operations.AddField(
+                        model_name=model_name,
+                        name=field_name,
+                        field=field,
+                    )
+                )
+        # Old fields
+        for app_label, model_name, field_name in old_fields - new_fields:
+            old_model_state = self.from_state.models[app_label, model_name]
+            new_model_state = self.to_state.models[app_label, model_name]
+            self.add_to_migration(
+                app_label,
+                operations.RemoveField(
+                    model_name=model_name,
+                    name=field_name,
+                )
+            )
+        # The same fields
+        for app_label, model_name, field_name in old_fields.intersection(new_fields):
+            # Did the field change?
+            old_model_state = self.from_state.models[app_label, model_name]
+            new_model_state = self.to_state.models[app_label, model_name]
+            old_field_dec = old_model_state.get_field_by_name(field_name).deconstruct()
+            new_field_dec = new_model_state.get_field_by_name(field_name).deconstruct()
+            if old_field_dec != new_field_dec:
+                self.add_to_migration(
+                    app_label,
+                    operations.AlterField(
+                        model_name=model_name,
+                        name=field_name,
+                        field=new_model_state.get_field_by_name(field_name),
                     )
                 )
         # Alright, now add internal dependencies
@@ -255,6 +284,13 @@ class MigrationAutodetector(object):
             dependency = (other_app_label, "__first__")
         self.migrations[app_label][-1].dependencies.append(dependency)
 
+    def add_swappable_dependency(self, app_label, setting_name):
+        """
+        Adds a dependency to the value of a swappable model setting.
+        """
+        dependency = ("__setting__", setting_name)
+        self.migrations[app_label][-1].dependencies.append(dependency)
+
     def _arrange_for_graph(self, changes, graph):
         """
         Takes in a result from changes() and a MigrationGraph,
@@ -278,6 +314,7 @@ class MigrationAutodetector(object):
                 for migration in migrations:
                     name_map[(app_label, migration.name)] = (app_label, "__first__")
                 del changes[app_label]
+                continue
             # Work out the next number in the sequence
             if app_leaf is None:
                 next_number = 1
@@ -330,8 +367,9 @@ class MigrationAutodetector(object):
     def suggest_name(cls, ops):
         """
         Given a set of operations, suggests a name for the migration
-        they might represent. Names not guaranteed to be unique; they
-        must be prefixed by a number or date.
+        they might represent. Names are not guaranteed to be unique,
+        but we put some effort in to the fallback name to avoid VCS conflicts
+        if we can.
         """
         if len(ops) == 1:
             if isinstance(ops[0], operations.CreateModel):
@@ -344,7 +382,7 @@ class MigrationAutodetector(object):
                 return "remove_%s_%s" % (ops[0].model_name.lower(), ops[0].name.lower())
         elif all(isinstance(o, operations.CreateModel) for o in ops):
             return "_".join(sorted(o.name.lower() for o in ops))
-        return "auto"
+        return "auto_%s" % datetime.datetime.now().strftime("%Y%m%d_%H%M")
 
     @classmethod
     def parse_number(cls, name):
@@ -355,100 +393,3 @@ class MigrationAutodetector(object):
         if re.match(r"^\d+_", name):
             return int(name.split("_")[0])
         return None
-
-
-class MigrationQuestioner(object):
-    """
-    Gives the autodetector responses to questions it might have.
-    This base class has a built-in noninteractive mode, but the
-    interactive subclass is what the command-line arguments will use.
-    """
-
-    def __init__(self, defaults=None):
-        self.defaults = defaults or {}
-
-    def ask_initial(self, app_label):
-        "Should we create an initial migration for the app?"
-        return self.defaults.get("ask_initial", False)
-
-    def ask_not_null_addition(self, field_name, model_name):
-        "Adding a NOT NULL field to a model"
-        # None means quit
-        return None
-
-    def ask_rename(self, model_name, old_name, new_name, field_instance):
-        "Was this field really renamed?"
-        return self.defaults.get("ask_rename", False)
-
-
-class InteractiveMigrationQuestioner(MigrationQuestioner):
-
-    def __init__(self, specified_apps=set()):
-        self.specified_apps = specified_apps
-
-    def _boolean_input(self, question, default=None):
-        result = input("%s " % question)
-        if not result and default is not None:
-            return default
-        while len(result) < 1 or result[0].lower() not in "yn":
-            result = input("Please answer yes or no: ")
-        return result[0].lower() == "y"
-
-    def _choice_input(self, question, choices):
-        print(question)
-        for i, choice in enumerate(choices):
-            print(" %s) %s" % (i + 1, choice))
-        result = input("Select an option: ")
-        while True:
-            try:
-                value = int(result)
-                if 0 < value <= len(choices):
-                    return value
-            except ValueError:
-                pass
-            result = input("Please select a valid option: ")
-
-    def ask_initial(self, app_label):
-        "Should we create an initial migration for the app?"
-        # Don't ask for django.contrib apps
-        app = cache.get_app(app_label)
-        if app.__name__.startswith("django.contrib"):
-            return False
-        # If it was specified on the command line, definitely true
-        if app_label in self.specified_apps:
-            return True
-        # Now ask
-        return self._boolean_input("Do you want to enable migrations for app '%s'? [y/N]" % app_label, False)
-
-    def ask_not_null_addition(self, field_name, model_name):
-        "Adding a NOT NULL field to a model"
-        choice = self._choice_input(
-            "You are trying to add a non-nullable field '%s' to %s without a default;\n" % (field_name, model_name) +
-            "this is not possible. Please select a fix:",
-            [
-                "Provide a one-off default now (will be set on all existing rows)",
-                "Quit, and let me add a default in models.py",
-            ]
-        )
-        if choice == 2:
-            sys.exit(3)
-        else:
-            print("Please enter the default value now, as valid Python")
-            print("The datetime module is available, so you can do e.g. datetime.date.today()")
-            while True:
-                code = input(">>> ")
-                if not code:
-                    print("Please enter some code, or 'exit' (with no quotes) to exit.")
-                elif code == "exit":
-                    sys.exit(1)
-                else:
-                    try:
-                        return eval(code, {}, {"datetime": datetime_safe})
-                    except (SyntaxError, NameError) as e:
-                        print("Invalid input: %s" % e)
-                    else:
-                        break
-
-    def ask_rename(self, model_name, old_name, new_name, field_instance):
-        "Was this field really renamed?"
-        return self._boolean_input("Did you rename %s.%s to %s.%s (a %s)? [y/N]" % (model_name, old_name, model_name, new_name, field_instance.__class__.__name__), False)

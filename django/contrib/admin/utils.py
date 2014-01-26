@@ -7,7 +7,6 @@ from django.contrib.auth import get_permission_codename
 from django.db import models
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.deletion import Collector
-from django.db.models.related import RelatedObject
 from django.forms.forms import pretty_name
 from django.utils import formats
 from django.utils.html import format_html
@@ -18,18 +17,17 @@ from django.utils import six
 from django.utils.translation import ungettext
 from django.core.urlresolvers import reverse, NoReverseMatch
 
+
 def lookup_needs_distinct(opts, lookup_path):
     """
     Returns True if 'distinct()' should be used to query the given lookup path.
     """
     field_name = lookup_path.split('__', 1)[0]
     field = opts.get_field_by_name(field_name)[0]
-    if ((hasattr(field, 'rel') and
-         isinstance(field.rel, models.ManyToManyRel)) or
-        (isinstance(field, models.related.RelatedObject) and
-         not field.field.unique)):
+    if hasattr(field, 'get_path_info') and any(path.m2m for path in field.get_path_info()):
         return True
     return False
+
 
 def prepare_lookup_value(key, value):
     """
@@ -45,6 +43,7 @@ def prepare_lookup_value(key, value):
         else:
             value = True
     return value
+
 
 def quote(s):
     """
@@ -151,16 +150,20 @@ def get_deleted_objects(objs, opts, user, admin_site, using):
 class NestedObjects(Collector):
     def __init__(self, *args, **kwargs):
         super(NestedObjects, self).__init__(*args, **kwargs)
-        self.edges = {} # {from_instance: [to_instances]}
+        self.edges = {}  # {from_instance: [to_instances]}
         self.protected = set()
 
     def add_edge(self, source, target):
         self.edges.setdefault(source, []).append(target)
 
-    def collect(self, objs, source_attr=None, **kwargs):
+    def collect(self, objs, source=None, source_attr=None, **kwargs):
         for obj in objs:
             if source_attr:
-                self.add_edge(getattr(obj, source_attr), obj)
+                related_name = source_attr % {
+                    'class': source._meta.model_name,
+                    'app_label': source._meta.app_label,
+                }
+                self.add_edge(getattr(obj, related_name), obj)
             else:
                 self.add_edge(None, obj)
         try:
@@ -283,10 +286,11 @@ def label_for_field(name, model, model_admin=None, return_attr=False):
     attr = None
     try:
         field = model._meta.get_field_by_name(name)[0]
-        if isinstance(field, RelatedObject):
-            label = field.opts.verbose_name
-        else:
+        try:
             label = field.verbose_name
+        except AttributeError:
+            # field is likely a RelatedObject
+            label = field.opts.verbose_name
     except models.FieldDoesNotExist:
         if name == "__unicode__":
             label = force_text(model._meta.verbose_name)
@@ -334,7 +338,7 @@ def help_text_for_field(name, model):
         pass
     else:
         field = field_data[0]
-        if not isinstance(field, RelatedObject):
+        if hasattr(field, 'help_text'):
             help_text = field.help_text
     return smart_text(help_text)
 
@@ -386,10 +390,8 @@ class NotRelationField(Exception):
 
 
 def get_model_from_relation(field):
-    if isinstance(field, models.related.RelatedObject):
-        return field.model
-    elif getattr(field, 'rel'): # or isinstance?
-        return field.rel.to
+    if hasattr(field, 'get_path_info'):
+        return field.get_path_info()[-1].to_opts.model
     else:
         raise NotRelationField
 
@@ -409,7 +411,7 @@ def reverse_field_path(model, path):
     for piece in pieces:
         field, model, direct, m2m = parent._meta.get_field_by_name(piece)
         # skip trailing data field if extant:
-        if len(reversed_path) == len(pieces)-1: # final iteration
+        if len(reversed_path) == len(pieces) - 1:  # final iteration
             try:
                 get_model_from_relation(field)
             except NotRelationField:
@@ -466,8 +468,8 @@ def get_limit_choices_to_from_path(model, path):
         fields and hasattr(fields[-1], 'rel') and
         getattr(fields[-1].rel, 'limit_choices_to', None))
     if not limit_choices_to:
-        return models.Q() # empty Q
+        return models.Q()  # empty Q
     elif isinstance(limit_choices_to, models.Q):
-        return limit_choices_to # already a Q
+        return limit_choices_to  # already a Q
     else:
-        return models.Q(**limit_choices_to) # convert dict to Q
+        return models.Q(**limit_choices_to)  # convert dict to Q

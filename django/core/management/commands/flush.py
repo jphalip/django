@@ -2,8 +2,8 @@ import sys
 from importlib import import_module
 from optparse import make_option
 
-from django.conf import settings
-from django.db import connections, router, transaction, models, DEFAULT_DB_ALIAS
+from django.apps import apps
+from django.db import connections, router, transaction, DEFAULT_DB_ALIAS
 from django.core.management import call_command
 from django.core.management.base import NoArgsCommand, CommandError
 from django.core.management.color import no_style
@@ -41,9 +41,9 @@ class Command(NoArgsCommand):
 
         # Import the 'management' module within each installed app, to register
         # dispatcher events.
-        for app_name in settings.INSTALLED_APPS:
+        for app_config in apps.get_app_configs():
             try:
-                import_module('.management', app_name)
+                import_module('.management', app_config.name)
             except ImportError:
                 pass
 
@@ -93,9 +93,6 @@ Are you sure you want to do this?
         # Emit the post migrate signal. This allows individual applications to
         # respond as if the database had been migrated from scratch.
         all_models = []
-        for app in models.get_apps():
-            all_models.extend([
-                m for m in models.get_models(app, include_auto_created=True)
-                if router.allow_migrate(database, m)
-            ])
+        for app_config in apps.get_app_configs():
+            all_models.extend(router.get_migratable_models(app_config, database, include_auto_created=True))
         emit_post_migrate_signal(set(all_models), verbosity, interactive, database)

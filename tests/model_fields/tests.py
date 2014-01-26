@@ -85,6 +85,11 @@ class BasicFieldTests(test.TestCase):
         klass = forms.TypedMultipleChoiceField
         self.assertIsInstance(field.formfield(choices_form_class=klass), klass)
 
+    def test_field_str(self):
+        from django.utils.encoding import force_str
+        f = Foo._meta.get_field('a')
+        self.assertEqual(force_str(f), "model_fields.Foo.a")
+
 
 class DecimalFieldTests(test.TestCase):
     def test_to_python(self):
@@ -133,12 +138,14 @@ class DecimalFieldTests(test.TestCase):
         # This should not crash. That counts as a win for our purposes.
         Foo.objects.filter(d__gte=100000000000)
 
+
 class ForeignKeyTests(test.TestCase):
     def test_callable_default(self):
         """Test the use of a lazy callable for ForeignKey.default"""
         a = Foo.objects.create(id=1, a='abc', d=Decimal("12.34"))
         b = Bar.objects.create(b="bcd")
         self.assertEqual(b.a, a)
+
 
 class DateTimeFieldTests(unittest.TestCase):
     def test_datetimefield_to_python_usecs(self):
@@ -156,6 +163,7 @@ class DateTimeFieldTests(unittest.TestCase):
                          datetime.time(1, 2, 3, 4))
         self.assertEqual(f.to_python('01:02:03.999999'),
                          datetime.time(1, 2, 3, 999999))
+
 
 class BooleanFieldTests(unittest.TestCase):
     def _test_get_db_prep_lookup(self, f):
@@ -294,6 +302,7 @@ class BooleanFieldTests(unittest.TestCase):
         self.assertIsNone(nb.nbfield)
         nb.save()           # no error
 
+
 class ChoicesTests(test.TestCase):
     def test_choices_and_field_display(self):
         """
@@ -305,6 +314,7 @@ class ChoicesTests(test.TestCase):
         self.assertEqual(Whiz(c=9).get_c_display(), 9)          # Invalid value
         self.assertEqual(Whiz(c=None).get_c_display(), None)    # Blank value
         self.assertEqual(Whiz(c='').get_c_display(), '')        # Empty value
+
 
 class SlugFieldTests(test.TestCase):
     def test_slugfield_max_length(self):
@@ -409,6 +419,7 @@ class BigIntegerFieldTests(test.TestCase):
         b = BigInt.objects.get(value='10')
         self.assertEqual(b.value, 10)
 
+
 class TypeCoercionTests(test.TestCase):
     """
     Test that database lookups can accept the wrong types and convert
@@ -421,6 +432,7 @@ class TypeCoercionTests(test.TestCase):
 
     def test_lookup_integer_in_textfield(self):
         self.assertEqual(Post.objects.filter(body=24).count(), 0)
+
 
 class FileFieldTests(unittest.TestCase):
     def test_clearable(self):
@@ -495,6 +507,7 @@ class BinaryFieldTests(test.TestCase):
     def test_max_length(self):
         dm = DataModel(short_data=self.binary_data * 4)
         self.assertRaises(ValidationError, dm.full_clean)
+
 
 class GenericIPAddressFieldTests(test.TestCase):
     def test_genericipaddressfield_formfield_protocol(self):
@@ -604,7 +617,7 @@ class PromiseTest(test.TestCase):
 
     def test_IPAddressField(self):
         lazy_func = lazy(lambda: '127.0.0.1', six.text_type)
-        with warnings.catch_warnings(record=True) as w:
+        with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             self.assertIsInstance(
                 IPAddressField().get_prep_value(lazy_func()),

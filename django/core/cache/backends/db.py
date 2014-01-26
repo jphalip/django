@@ -1,6 +1,5 @@
 "Database cache backend."
 import base64
-import time
 from datetime import datetime
 
 try:
@@ -32,6 +31,7 @@ class Options(object):
         self.managed = True
         self.proxy = False
 
+
 class BaseDatabaseCache(BaseCache):
     def __init__(self, table, params):
         BaseCache.__init__(self, params)
@@ -40,6 +40,7 @@ class BaseDatabaseCache(BaseCache):
         class CacheEntry(object):
             _meta = Options(table)
         self.cache_model_class = CacheEntry
+
 
 class DatabaseCache(BaseDatabaseCache):
 
@@ -92,8 +93,7 @@ class DatabaseCache(BaseDatabaseCache):
         return self._base_set('add', key, value, timeout)
 
     def _base_set(self, mode, key, value, timeout=DEFAULT_TIMEOUT):
-        if timeout == DEFAULT_TIMEOUT:
-            timeout = self.default_timeout
+        timeout = self.get_backend_timeout(timeout)
         db = router.db_for_write(self.cache_model_class)
         table = connections[db].ops.quote_name(self._table)
         cursor = connections[db].cursor()
@@ -105,9 +105,9 @@ class DatabaseCache(BaseDatabaseCache):
         if timeout is None:
             exp = datetime.max
         elif settings.USE_TZ:
-            exp = datetime.utcfromtimestamp(time.time() + timeout)
+            exp = datetime.utcfromtimestamp(timeout)
         else:
-            exp = datetime.fromtimestamp(time.time() + timeout)
+            exp = datetime.fromtimestamp(timeout)
         exp = exp.replace(microsecond=0)
         if num > self._max_entries:
             self._cull(db, cursor, now)
@@ -199,6 +199,7 @@ class DatabaseCache(BaseDatabaseCache):
         table = connections[db].ops.quote_name(self._table)
         cursor = connections[db].cursor()
         cursor.execute('DELETE FROM %s' % table)
+
 
 # For backwards compatibility
 class CacheClass(DatabaseCache):

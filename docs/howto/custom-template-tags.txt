@@ -118,7 +118,7 @@ your function. Example:
 Registering custom filters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. method:: django.template.Library.filter
+.. method:: django.template.Library.filter()
 
 Once you've written your filter definition, you need to register it with
 your ``Library`` instance, to make it available to Django's template language:
@@ -157,7 +157,7 @@ are described in :ref:`filters and auto-escaping <filters-auto-escaping>` and
 Template filters that expect strings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. method:: django.template.defaultfilters.stringfilter
+.. method:: django.template.defaultfilters.stringfilter()
 
 If you're writing a template filter that only expects a string as the first
 argument, you should use the decorator ``stringfilter``. This will
@@ -339,6 +339,34 @@ Template filter code falls into one of two situations:
    handle the auto-escaping issues and return a safe string, the
    ``is_safe`` flag won't change anything either way.
 
+.. warning:: Avoiding XSS vulnerabilities when reusing built-in filters
+
+    Be careful when reusing Django's built-in filters. You'll need to pass
+    ``autoescape=True`` to the filter in order to get the proper autoescaping
+    behavior and avoid a cross-site script vulnerability.
+
+    For example, if you wanted to write a custom filter called
+    ``urlize_and_linebreaks`` that combined the :tfilter:`urlize` and
+    :tfilter:`linebreaksbr` filters, the filter would look like::
+
+        from django.template.defaultfilters import linebreaksbr, urlize
+
+        @register.filter
+        def urlize_and_linebreaks(text):
+            return linebreaksbr(urlize(text, autoescape=True), autoescape=True)
+
+    Then:
+
+    .. code-block:: html+django
+
+        {{ comment|urlize_and_linebreaks }}
+
+    would be equivalent to:
+
+    .. code-block:: html+django
+
+        {{ comment|urlize|linebreaksbr }}
+
 .. _filters-timezones:
 
 Filters and time zones
@@ -478,8 +506,12 @@ Notes:
 
 * The ``render()`` method is where the work actually happens.
 
-* ``render()`` should never raise ``TemplateSyntaxError`` or any other
-  exception. It should fail silently, just as template filters should.
+* ``render()`` should generally fail silently, particularly in a production
+  environment where :setting:`DEBUG` and :setting:`TEMPLATE_DEBUG` are
+  ``False``. In some cases however, particularly if :setting:`TEMPLATE_DEBUG` is
+  ``True``, this method may raise an exception to make debugging easier. For
+  example, several core tags raise ``django.template.TemplateSyntaxError``
+  if they receive the wrong number or type of arguments.
 
 Ultimately, this decoupling of compilation and rendering results in an
 efficient template system, because a template can render multiple contexts
@@ -718,7 +750,7 @@ cannot resolve the string passed to it in the current context of the page.
 Simple tags
 ~~~~~~~~~~~
 
-.. method:: django.template.Library.simple_tag
+.. method:: django.template.Library.simple_tag()
 
 Many template tags take a number of arguments -- strings or template variables
 -- and return a string after doing some processing based solely on

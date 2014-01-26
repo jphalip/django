@@ -2,6 +2,7 @@
 # Unit and doctests for specific database backends.
 from __future__ import unicode_literals
 
+import copy
 import datetime
 from decimal import Decimal
 import re
@@ -20,9 +21,9 @@ from django.db.models import Sum, Avg, Variance, StdDev
 from django.db.models.fields import (AutoField, DateField, DateTimeField,
     DecimalField, IntegerField, TimeField)
 from django.db.utils import ConnectionHandler
-from django.test import (TestCase, skipUnlessDBFeature, skipIfDBFeature,
-    TransactionTestCase)
-from django.test.utils import override_settings, str_prefix
+from django.test import (TestCase, TransactionTestCase, override_settings,
+    skipUnlessDBFeature, skipIfDBFeature)
+from django.test.utils import str_prefix
 from django.utils import six
 from django.utils.six.moves import xrange
 
@@ -336,16 +337,18 @@ class PostgresVersionTest(TestCase):
         self.assertEqual(pg_version.get_version(conn), 80300)
 
 
-class PostgresNewConnectionTest(TestCase):
-    """
-    #17062: PostgreSQL shouldn't roll back SET TIME ZONE, even if the first
-    transaction is rolled back.
-    """
+class PostgresNewConnectionTests(TestCase):
+
     @unittest.skipUnless(
         connection.vendor == 'postgresql',
         "This test applies only to PostgreSQL")
     def test_connect_and_rollback(self):
-        new_connections = ConnectionHandler(settings.DATABASES)
+        """
+        PostgreSQL shouldn't roll back SET TIME ZONE, even if the first
+        transaction is rolled back (#17062).
+        """
+        databases = copy.deepcopy(settings.DATABASES)
+        new_connections = ConnectionHandler(databases)
         new_connection = new_connections[DEFAULT_DB_ALIAS]
         try:
             # Ensure the database default time zone is different than
@@ -370,10 +373,26 @@ class PostgresNewConnectionTest(TestCase):
             tz = cursor.fetchone()[0]
             self.assertEqual(new_tz, tz)
         finally:
-            try:
-                new_connection.close()
-            except DatabaseError:
-                pass
+            new_connection.close()
+
+    @unittest.skipUnless(
+        connection.vendor == 'postgresql',
+        "This test applies only to PostgreSQL")
+    def test_connect_non_autocommit(self):
+        """
+        The connection wrapper shouldn't believe that autocommit is enabled
+        after setting the time zone when AUTOCOMMIT is False (#21452).
+        """
+        databases = copy.deepcopy(settings.DATABASES)
+        databases[DEFAULT_DB_ALIAS]['AUTOCOMMIT'] = False
+        new_connections = ConnectionHandler(databases)
+        new_connection = new_connections[DEFAULT_DB_ALIAS]
+        try:
+            # Open a database connection.
+            new_connection.cursor()
+            self.assertFalse(new_connection.get_autocommit())
+        finally:
+            new_connection.close()
 
 
 # This test needs to run outside of a transaction, otherwise closing the
@@ -431,6 +450,7 @@ class EscapingChecks(TestCase):
         response = cursor.fetchall()[0][0]
         # response should be an non-zero integer
         self.assertTrue(int(response))
+
 
 @override_settings(DEBUG=True)
 class EscapingChecksDebug(EscapingChecks):
@@ -496,9 +516,9 @@ class BackendTestCase(TestCase):
         tbl = connection.introspection.table_name_converter(opts.db_table)
         f1 = connection.ops.quote_name(opts.get_field('root').column)
         f2 = connection.ops.quote_name(opts.get_field('square').column)
-        if paramstyle=='format':
+        if paramstyle == 'format':
             query = 'INSERT INTO %s (%s, %s) VALUES (%%s, %%s)' % (tbl, f1, f2)
-        elif paramstyle=='pyformat':
+        elif paramstyle == 'pyformat':
             query = 'INSERT INTO %s (%s, %s) VALUES (%%(root)s, %%(square)s)' % (tbl, f1, f2)
         else:
             raise ValueError("unsupported paramstyle in test")
@@ -509,12 +529,12 @@ class BackendTestCase(TestCase):
 
     def test_cursor_executemany(self):
         #4896: Test cursor.executemany
-        args = [(i, i**2) for i in range(-5, 6)]
+        args = [(i, i ** 2) for i in range(-5, 6)]
         self.create_squares_with_executemany(args)
         self.assertEqual(models.Square.objects.count(), 11)
         for i in range(-5, 6):
             square = models.Square.objects.get(root=i)
-            self.assertEqual(square.square, i**2)
+            self.assertEqual(square.square, i ** 2)
 
     def test_cursor_executemany_with_empty_params_list(self):
         #4765: executemany with params=[] does nothing
@@ -524,11 +544,11 @@ class BackendTestCase(TestCase):
 
     def test_cursor_executemany_with_iterator(self):
         #10320: executemany accepts iterators
-        args = iter((i, i**2) for i in range(-3, 2))
+        args = iter((i, i ** 2) for i in range(-3, 2))
         self.create_squares_with_executemany(args)
         self.assertEqual(models.Square.objects.count(), 5)
 
-        args = iter((i, i**2) for i in range(3, 7))
+        args = iter((i, i ** 2) for i in range(3, 7))
         with override_settings(DEBUG=True):
             # same test for DebugCursorWrapper
             self.create_squares_with_executemany(args)
@@ -544,20 +564,20 @@ class BackendTestCase(TestCase):
     @skipUnlessDBFeature('supports_paramstyle_pyformat')
     def test_cursor_executemany_with_pyformat(self):
         #10070: Support pyformat style passing of paramters
-        args = [{'root': i, 'square': i**2} for i in range(-5, 6)]
+        args = [{'root': i, 'square': i ** 2} for i in range(-5, 6)]
         self.create_squares(args, 'pyformat', multiple=True)
         self.assertEqual(models.Square.objects.count(), 11)
         for i in range(-5, 6):
             square = models.Square.objects.get(root=i)
-            self.assertEqual(square.square, i**2)
+            self.assertEqual(square.square, i ** 2)
 
     @skipUnlessDBFeature('supports_paramstyle_pyformat')
     def test_cursor_executemany_with_pyformat_iterator(self):
-        args = iter({'root': i, 'square': i**2} for i in range(-3, 2))
+        args = iter({'root': i, 'square': i ** 2} for i in range(-3, 2))
         self.create_squares(args, 'pyformat', multiple=True)
         self.assertEqual(models.Square.objects.count(), 5)
 
-        args = iter({'root': i, 'square': i**2} for i in range(3, 7))
+        args = iter({'root': i, 'square': i ** 2} for i in range(3, 7))
         with override_settings(DEBUG=True):
             # same test for DebugCursorWrapper
             self.create_squares(args, 'pyformat', multiple=True)
@@ -986,6 +1006,7 @@ class BackendUtilTests(TestCase):
               '0.1')
         equal('0.1234567890', 12, 0,
               '0')
+
 
 @unittest.skipUnless(
     connection.vendor == 'postgresql',

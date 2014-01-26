@@ -9,20 +9,7 @@ import sys
 import tempfile
 import warnings
 
-def upath(path):
-    """
-    Separate version of django.utils._os.upath. The django.utils version isn't
-    usable here, as upath is needed for RUNTESTS_DIR which is needed before
-    django can be imported.
-    """
-    if sys.version_info[0] != 3 and not isinstance(path, bytes):
-        fs_encoding = sys.getfilesystemencoding() or sys.getdefaultencoding()
-        return path.decode(fs_encoding)
-    return path
-
-RUNTESTS_DIR = os.path.abspath(os.path.dirname(upath(__file__)))
-sys.path.insert(0, os.path.dirname(RUNTESTS_DIR))  # 'tests/../'
-
+import django
 from django import contrib
 from django.utils._os import upath
 from django.utils import six
@@ -32,6 +19,7 @@ CONTRIB_MODULE_PATH = 'django.contrib'
 TEST_TEMPLATE_DIR = 'templates'
 
 CONTRIB_DIR = os.path.dirname(upath(contrib.__file__))
+RUNTESTS_DIR = os.path.abspath(os.path.dirname(upath(__file__)))
 
 TEMP_DIR = tempfile.mkdtemp(prefix='django_')
 os.environ['DJANGO_TEST_TEMP_DIR'] = TEMP_DIR
@@ -56,7 +44,7 @@ ALWAYS_INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.comments',
-    'django.contrib.admin',
+    'django.contrib.admin.apps.SimpleAdminConfig',
     'django.contrib.admindocs',
     'django.contrib.staticfiles',
     'django.contrib.humanize',
@@ -82,25 +70,27 @@ def get_test_modules():
     for modpath, dirpath in discovery_paths:
         for f in os.listdir(dirpath):
             if ('.' in f or
-                # Python 3 byte code dirs (PEP 3147)
-                f == '__pycache__' or
-                f.startswith('sql') or
-                os.path.basename(f) in SUBDIRS_TO_SKIP or
-                os.path.isfile(f)):
+                    # Python 3 byte code dirs (PEP 3147)
+                    f == '__pycache__' or
+                    f.startswith('sql') or
+                    os.path.basename(f) in SUBDIRS_TO_SKIP or
+                    os.path.isfile(f)):
                 continue
             modules.append((modpath, f))
     return modules
 
 
 def get_installed():
-    from django.db.models.loading import get_apps
-    return [app.__name__.rsplit('.', 1)[0] for app in get_apps()]
+    from django.apps import apps
+    return [app_config.name for app_config in apps.get_app_configs()]
 
 
 def setup(verbosity, test_labels):
+    from django.apps import apps, AppConfig
     from django.conf import settings
-    from django.db.models.loading import get_apps, load_app
     from django.test import TransactionTestCase, TestCase
+
+    print("Testing against Django installed in '%s'" % os.path.dirname(django.__file__))
 
     # Force declaring available_apps in TransactionTestCase for faster tests.
     def no_available_apps(self):
@@ -135,10 +125,18 @@ def setup(verbosity, test_labels):
         handler = logging.StreamHandler()
         logger.addHandler(handler)
 
+    warnings.filterwarnings(
+        'ignore',
+        'django.contrib.comments is deprecated and will be removed before Django 1.8.',
+        DeprecationWarning
+    )
+    warnings.filterwarnings(
+        'ignore',
+        'Model class django.contrib.comments.models.*supported in Django 1.9.',
+        PendingDeprecationWarning
+    )
     # Load all the ALWAYS_INSTALLED_APPS.
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', 'django.contrib.comments is deprecated and will be removed before Django 1.8.', DeprecationWarning)
-        get_apps()
+    django.setup()
 
     # Load all the test model apps.
     test_modules = get_test_modules()
@@ -164,33 +162,41 @@ def setup(verbosity, test_labels):
         if not test_labels:
             module_found_in_labels = True
         else:
-            match = lambda label: (
-                module_label == label or # exact match
-                module_label.startswith(label + '.') # ancestor match
-                )
+            module_found_in_labels = any(
+                # exact match or ancestor match
+                module_label == label or module_label.startswith(label + '.')
+                for label in test_labels_set)
 
-            module_found_in_labels = any(match(l) for l in test_labels_set)
-
-        if module_found_in_labels:
+        installed_app_names = set(get_installed())
+        if module_found_in_labels and module_label not in installed_app_names:
             if verbosity >= 2:
                 print("Importing application %s" % module_name)
-            mod = load_app(module_label)
-            if mod:
-                if module_label not in settings.INSTALLED_APPS:
-                    settings.INSTALLED_APPS.append(module_label)
+            # HACK.
+            settings.INSTALLED_APPS.append(module_label)
+            app_config = AppConfig.create(module_label)
+            apps.app_configs[app_config.label] = app_config
+            app_config.import_models(apps.all_models[app_config.label])
+            apps.clear_cache()
 
     return state
 
+
 def teardown(state):
     from django.conf import settings
-    # Removing the temporary TEMP_DIR. Ensure we pass in unicode
-    # so that it will successfully remove temp trees containing
-    # non-ASCII filenames on Windows. (We're assuming the temp dir
-    # name itself does not contain non-ASCII characters.)
-    shutil.rmtree(six.text_type(TEMP_DIR))
+
+    try:
+        # Removing the temporary TEMP_DIR. Ensure we pass in unicode
+        # so that it will successfully remove temp trees containing
+        # non-ASCII filenames on Windows. (We're assuming the temp dir
+        # name itself does not contain non-ASCII characters.)
+        shutil.rmtree(six.text_type(TEMP_DIR))
+    except OSError:
+        print('Failed to remove temp directory: %s' % TEMP_DIR)
+
     # Restore the old settings.
     for key, value in state.items():
         setattr(settings, key, value)
+
 
 def django_tests(verbosity, interactive, failfast, test_labels):
     from django.conf import settings
@@ -280,6 +286,7 @@ def bisect_tests(bisection_label, options, test_labels):
         print("***** Source of error: %s" % test_labels[0])
     teardown(state)
 
+
 def paired_tests(paired_test, options, test_labels):
     state = setup(int(options.verbosity), test_labels)
 
@@ -314,6 +321,7 @@ def paired_tests(paired_test, options, test_labels):
 
     print('***** No problem pair found')
     teardown(state)
+
 
 if __name__ == "__main__":
     from optparse import OptionParser

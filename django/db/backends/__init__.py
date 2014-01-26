@@ -1,8 +1,6 @@
 import datetime
 import time
 
-from django.db.utils import DatabaseError, ProgrammingError
-
 try:
     from django.utils.six.moves import _thread as thread
 except ImportError:
@@ -12,11 +10,12 @@ from contextlib import contextmanager
 from importlib import import_module
 
 from django.conf import settings
+from django.core import checks
 from django.db import DEFAULT_DB_ALIAS
 from django.db.backends.signals import connection_created
 from django.db.backends import utils
 from django.db.transaction import TransactionManagementError
-from django.db.utils import DatabaseErrorWrapper
+from django.db.utils import DatabaseError, DatabaseErrorWrapper, ProgrammingError
 from django.utils.functional import cached_property
 from django.utils import six
 from django.utils import timezone
@@ -112,9 +111,8 @@ class BaseDatabaseWrapper(object):
         # Establish the connection
         conn_params = self.get_connection_params()
         self.connection = self.get_new_connection(conn_params)
+        self.set_autocommit(self.settings_dict['AUTOCOMMIT'])
         self.init_connection_state()
-        if self.settings_dict['AUTOCOMMIT']:
-            self.set_autocommit(True)
         connection_created.send(sender=self.__class__, connection=self)
 
     def ensure_connection(self):
@@ -155,7 +153,7 @@ class BaseDatabaseWrapper(object):
         """
         self.validate_thread_sharing()
         if (self.use_debug_cursor or
-            (self.use_debug_cursor is None and settings.DEBUG)):
+                (self.use_debug_cursor is None and settings.DEBUG)):
             cursor = self.make_debug_cursor(self._cursor())
         else:
             cursor = utils.CursorWrapper(self._cursor(), self)
@@ -360,6 +358,12 @@ class BaseDatabaseWrapper(object):
         if self.in_atomic_block:
             raise TransactionManagementError(
                 "This is forbidden when an 'atomic' block is active.")
+
+    def validate_no_broken_transaction(self):
+        if self.needs_rollback:
+            raise TransactionManagementError(
+                "An error occurred in the current transaction. You can't "
+                "execute queries until the end of the 'atomic' block.")
 
     def abort(self):
         """
@@ -638,6 +642,9 @@ class BaseDatabaseFeatures(object):
     # when autocommit is disabled? http://bugs.python.org/issue8145#msg109965
     autocommits_when_autocommit_is_off = False
 
+    # Does the backend prevent running SQL queries in broken transactions?
+    atomic_transactions = True
+
     # Can we roll back DDL in a transaction?
     can_rollback_ddl = False
 
@@ -666,6 +673,9 @@ class BaseDatabaseFeatures(object):
 
     # What kind of error does the backend throw when accessing closed cursor?
     closed_cursor_error_class = ProgrammingError
+
+    # Does 'a' LIKE 'A' match?
+    has_case_insensitive_like = True
 
     def __init__(self, connection):
         self.connection = connection
@@ -1208,8 +1218,7 @@ class BaseDatabaseOperations(object):
 
 # Structure returned by the DB-API cursor.description interface (PEP 249)
 FieldInfo = namedtuple('FieldInfo',
-    'name type_code display_size internal_size precision scale null_ok'
-)
+    'name type_code display_size internal_size precision scale null_ok')
 
 
 class BaseDatabaseIntrospection(object):
@@ -1262,13 +1271,12 @@ class BaseDatabaseIntrospection(object):
         If only_existing is True, the resulting list will only include the tables
         that actually exist in the database.
         """
-        from django.db import models, router
+        from django.apps import apps
+        from django.db import router
         tables = set()
-        for app in models.get_apps():
-            for model in models.get_models(app):
+        for app_config in apps.get_app_configs():
+            for model in router.get_migratable_models(app_config, self.connection.alias):
                 if not model._meta.managed:
-                    continue
-                if not router.allow_migrate(self.connection.alias, model):
                     continue
                 tables.add(model._meta.db_table)
                 tables.update(f.m2m_db_table() for f in model._meta.local_many_to_many)
@@ -1284,12 +1292,11 @@ class BaseDatabaseIntrospection(object):
 
     def installed_models(self, tables):
         "Returns a set of all models represented by the provided list of table names."
-        from django.db import models, router
+        from django.apps import apps
+        from django.db import router
         all_models = []
-        for app in models.get_apps():
-            for model in models.get_models(app):
-                if router.allow_migrate(self.connection.alias, model):
-                    all_models.append(model)
+        for app_config in apps.get_app_configs():
+            all_models.extend(router.get_migratable_models(app_config, self.connection.alias))
         tables = list(map(self.table_name_converter, tables))
         return set([
             m for m in all_models
@@ -1298,18 +1305,16 @@ class BaseDatabaseIntrospection(object):
 
     def sequence_list(self):
         "Returns a list of information about all DB sequences for all models in all apps."
+        from django.apps import apps
         from django.db import models, router
 
-        apps = models.get_apps()
         sequence_list = []
 
-        for app in apps:
-            for model in models.get_models(app):
+        for app_config in apps.get_app_configs():
+            for model in router.get_migratable_models(app_config, self.connection.alias):
                 if not model._meta.managed:
                     continue
                 if model._meta.swapped:
-                    continue
-                if not router.allow_migrate(self.connection.alias, model):
                     continue
                 for f in model._meta.local_fields:
                     if isinstance(f, models.AutoField):
@@ -1396,5 +1401,30 @@ class BaseDatabaseValidation(object):
         self.connection = connection
 
     def validate_field(self, errors, opts, f):
-        "By default, there is no backend-specific validation"
+        """
+        By default, there is no backend-specific validation.
+
+        This method has been deprecated by the new checks framework. New
+        backends should implement check_field instead.
+        """
+        # This is deliberately commented out. It exists as a marker to
+        # remind us to remove this method, and the check_field() shim,
+        # when the time comes.
+        # warnings.warn('"validate_field" has been deprecated", PendingDeprecationWarning)
         pass
+
+    def check_field(self, field, **kwargs):
+        class ErrorList(list):
+            """A dummy list class that emulates API used by the older
+            validate_field() method. When validate_field() is fully
+            deprecated, this dummy can be removed too.
+            """
+            def add(self, opts, error_message):
+                self.append(checks.Error(error_message, hint=None, obj=field))
+
+        errors = ErrorList()
+        # Some tests create fields in isolation -- the fields are not attached
+        # to any model, so they have no `model` attribute.
+        opts = field.model._meta if hasattr(field, 'model') else None
+        self.validate_field(errors, field, opts)
+        return list(errors)

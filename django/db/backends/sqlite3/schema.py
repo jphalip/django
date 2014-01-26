@@ -1,11 +1,12 @@
+from django.apps.registry import Apps
 from django.db.backends.schema import BaseDatabaseSchemaEditor
 from django.db.models.fields.related import ManyToManyField
-from django.db.models.loading import BaseAppCache
 
 
 class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
 
     sql_delete_table = "DROP TABLE %(table)s"
+    sql_create_inline_fk = "REFERENCES %(to_table)s (%(to_column)s)"
 
     def _remake_table(self, model, create_fields=[], delete_fields=[], alter_fields=[], rename_fields=[], override_uniques=None):
         """
@@ -28,6 +29,11 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         # Add in any created fields
         for field in create_fields:
             body[field.name] = field
+            # If there's a default, insert it into the copy map
+            if field.has_default():
+                mapping[field.column] = self.connection.ops.quote_parameter(
+                    field.get_default()
+                )
         # Add in any altered fields
         for (old_field, new_field) in alter_fields:
             del body[old_field.name]
@@ -38,14 +44,14 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         for field in delete_fields:
             del body[field.name]
             del mapping[field.column]
-        # Work inside a new AppCache
-        app_cache = BaseAppCache()
+        # Work inside a new app registry
+        apps = Apps()
         # Construct a new model for the new state
         meta_contents = {
             'app_label': model._meta.app_label,
             'db_table': model._meta.db_table + "__new",
             'unique_together': model._meta.unique_together if override_uniques is None else override_uniques,
-            'app_cache': app_cache,
+            'apps': apps,
         }
         meta = type("Meta", tuple(), meta_contents)
         body['Meta'] = meta

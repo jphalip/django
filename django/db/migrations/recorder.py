@@ -1,5 +1,5 @@
+from django.apps.registry import Apps
 from django.db import models
-from django.db.models.loading import BaseAppCache
 from django.utils.timezone import now
 
 
@@ -20,8 +20,9 @@ class MigrationRecorder(object):
         app = models.CharField(max_length=255)
         name = models.CharField(max_length=255)
         applied = models.DateTimeField(default=now)
+
         class Meta:
-            app_cache = BaseAppCache()
+            apps = Apps()
             app_label = "migrations"
             db_table = "django_migrations"
 

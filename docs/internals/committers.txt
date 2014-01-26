@@ -16,7 +16,7 @@ Journal-World`_ of Lawrence, Kansas, USA.
     He was lead developer at World Online for 2.5 years, during which time
     Django was developed and implemented on World Online's sites. He was the
     leader and founder of EveryBlock_, a "news feed for your block." He now
-    develops for Soundslice_.
+    develops Soundslice_.
 
     Adrian lives in Chicago, USA.
 
@@ -59,17 +59,6 @@ Current developers
 ==================
 
 Currently, Django is led by a team of volunteers from around the globe.
-
-.. _django-bdfls:
-
-BDFLs
------
-
-Adrian and Jacob are the Co-`Benevolent Dictators for Life`_ of Django. When
-"rough consensus and working code" fails, they're the ones who make the tough
-decisions.
-
-.. _Benevolent Dictators for Life: http://en.wikipedia.org/wiki/Benevolent_Dictator_For_Life
 
 Core developers
 ---------------
@@ -223,7 +212,7 @@ Karen Tracey
 
     Jannis lives in Berlin, Germany.
 
-    .. _Jannis Leidel: http://jezdez.com/
+    .. _Jannis Leidel: https://jezdez.com/
     .. _Bauhaus-University Weimar: http://www.uni-weimar.de/
     .. _virtualenv: http://www.virtualenv.org/
     .. _pip: http://www.pip-installer.org/
@@ -394,10 +383,10 @@ Tim Graham
     a continuous integration server, and likes proving that Django is a good
     choice for enterprise software.
 
-    He works in a `management consulting company`_ in Paris, France.
+    He's the CTO of Oscaro_, an e-commerce company based in Paris, France.
 
-    .. _Aymeric Augustin: http://myks.org/
-    .. _management consulting company: http://www.polyconseil.fr/
+    .. _Aymeric Augustin: https://myks.org/
+    .. _Oscaro: http://www.oscaro.com/
 
 `Claude Paroz`_
     Claude is a former teacher who fell in love with free software at the
@@ -410,7 +399,7 @@ Tim Graham
     Django-based `l10n.gnome.org`_.
 
     .. _Claude Paroz: http://www.2xlibre.net
-    .. _l10n.gnome.org: http://l10n.gnome.org
+    .. _l10n.gnome.org: https://l10n.gnome.org
 
 Anssi Kääriäinen
     Anssi works as a developer at Finnish National Institute for Health and
@@ -521,11 +510,10 @@ Marc Tamlyn
     documentation at DjangoCon EU 2012, and also helped to develop `CCBV`_, an
     additional class based view reference tool.
 
-    Marc currently works at `Incuna Ltd`_, a digital healthcare agency in
+    Marc is currently a full time parent, part time developer, and lives in
     Oxford, UK.
 
     .. _CCBV: http://ccbv.co.uk/
-    .. _Incuna Ltd: http://incuna.com/
 
 Baptiste Mispelon
     Baptiste discovered Django around the 1.2 version and promptly switched away

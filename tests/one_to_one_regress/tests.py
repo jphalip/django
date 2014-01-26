@@ -1,8 +1,10 @@
 from __future__ import unicode_literals
 
+from django.db import connection
 from django.test import TestCase
 
-from .models import Place, Restaurant, Bar, Favorites, Target, UndergroundBar
+from .models import (Bar, Favorites, HiddenPointer, Place, Restaurant, Target,
+    UndergroundBar)
 
 
 class OneToOneRegressionTests(TestCase):
@@ -125,11 +127,11 @@ class OneToOneRegressionTests(TestCase):
             []
         )
         self.assertQuerysetEqual(
-            Target.objects.filter(pointer2=None),
+            Target.objects.filter(second_pointer=None),
             ['<Target: Target object>']
         )
         self.assertQuerysetEqual(
-            Target.objects.exclude(pointer2=None),
+            Target.objects.exclude(second_pointer=None),
             []
         )
 
@@ -225,12 +227,15 @@ class OneToOneRegressionTests(TestCase):
             with self.assertRaises(UndergroundBar.DoesNotExist):
                 p.undergroundbar
 
-        UndergroundBar.objects.create()
+        # Several instances of the origin are only possible if database allows
+        # inserting multiple NULL rows for a unique constraint
+        if connection.features.ignores_nulls_in_unique_constraints:
+            UndergroundBar.objects.create()
 
-        # When there are several instances of the origin
-        with self.assertNumQueries(0):
-            with self.assertRaises(UndergroundBar.DoesNotExist):
-                p.undergroundbar
+            # When there are several instances of the origin
+            with self.assertNumQueries(0):
+                with self.assertRaises(UndergroundBar.DoesNotExist):
+                    p.undergroundbar
 
     def test_set_reverse_on_unsaved_object(self):
         """
@@ -250,3 +255,12 @@ class OneToOneRegressionTests(TestCase):
         self.p1.delete()
         self.assertTrue(UndergroundBar.objects.filter(pk=u.pk).exists())
         self.assertIsNone(UndergroundBar.objects.get(pk=u.pk).place)
+
+    def test_hidden_accessor(self):
+        """
+        When a '+' ending related name is specified no reverse accessor should
+        be added to the related model.
+        """
+        self.assertFalse(
+            hasattr(Target, HiddenPointer._meta.get_field('target').related.get_accessor_name())
+        )

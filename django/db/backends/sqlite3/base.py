@@ -105,6 +105,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_foreign_keys = False
     supports_check_constraints = False
     autocommits_when_autocommit_is_off = True
+    atomic_transactions = False
     supports_paramstyle_pyformat = False
     supports_sequence_reset = False
 
@@ -211,7 +212,7 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     def quote_name(self, name):
         if name.startswith('"') and name.endswith('"'):
-            return name # Quoting once is enough.
+            return name  # Quoting once is enough.
         return '"%s"' % name
 
     def quote_parameter(self, value):
@@ -222,12 +223,12 @@ class DatabaseOperations(BaseDatabaseOperations):
         except _sqlite3.ProgrammingError:
             pass
         # Manual emulation of SQLite parameter quoting
-        if isinstance(value, six.integer_types):
+        if isinstance(value, type(True)):
+            return str(int(value))
+        elif isinstance(value, six.integer_types):
             return str(value)
         elif isinstance(value, six.string_types):
-            return six.text_type(value)
-        elif isinstance(value, type(True)):
-            return str(int(value))
+            return '"%s"' % six.text_type(value)
         elif value is None:
             return "NULL"
         else:
@@ -303,6 +304,13 @@ class DatabaseOperations(BaseDatabaseOperations):
         res.extend(["UNION ALL SELECT %s" % ", ".join(["%s"] * len(fields))] * (num_values - 1))
         return " ".join(res)
 
+    def combine_expression(self, connector, sub_expressions):
+        # SQLite doesn't have a power function, so we fake it with a
+        # user-defined function django_power that's registered in connect().
+        if connector == '^':
+            return 'django_power(%s)' % ','.join(sub_expressions)
+        return super(DatabaseOperations, self).combine_expression(connector, sub_expressions)
+
 
 class DatabaseWrapper(BaseDatabaseWrapper):
     vendor = 'sqlite'
@@ -324,6 +332,11 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'endswith': "LIKE %s ESCAPE '\\'",
         'istartswith': "LIKE %s ESCAPE '\\'",
         'iendswith': "LIKE %s ESCAPE '\\'",
+    }
+
+    pattern_ops = {
+        'startswith': "LIKE %s || '%%%%'",
+        'istartswith': "LIKE UPPER(%s) || '%%%%'",
     }
 
     Database = Database
@@ -375,6 +388,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         conn.create_function("django_datetime_trunc", 3, _sqlite_datetime_trunc)
         conn.create_function("regexp", 2, _sqlite_regexp)
         conn.create_function("django_format_dtdelta", 5, _sqlite_format_dtdelta)
+        conn.create_function("django_power", 2, _sqlite_power)
         return conn
 
     def init_connection_state(self):
@@ -392,12 +406,16 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             BaseDatabaseWrapper.close(self)
 
     def _savepoint_allowed(self):
+        # Two conditions are required here:
+        # - A sufficiently recent version of SQLite to support savepoints,
+        # - Being in a transaction, which can only happen inside 'atomic'.
+
         # When 'isolation_level' is not None, sqlite3 commits before each
         # savepoint; it's a bug. When it is None, savepoints don't make sense
-        # because autocommit is enabled. The only exception is inside atomic
-        # blocks. To work around that bug, on SQLite, atomic starts a
+        # because autocommit is enabled. The only exception is inside 'atomic'
+        # blocks. To work around that bug, on SQLite, 'atomic' starts a
         # transaction explicitly rather than simply disable autocommit.
-        return self.in_atomic_block
+        return self.features.uses_savepoints and self.in_atomic_block
 
     def _set_autocommit(self, autocommit):
         if autocommit:
@@ -562,3 +580,7 @@ def _sqlite_format_dtdelta(dt, conn, days, secs, usecs):
 
 def _sqlite_regexp(re_pattern, re_string):
     return bool(re.search(re_pattern, force_text(re_string))) if re_string is not None else False
+
+
+def _sqlite_power(x, y):
+    return x ** y

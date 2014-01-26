@@ -1,36 +1,57 @@
 from __future__ import unicode_literals
 
-from collections import OrderedDict
-import re
 from bisect import bisect
+from collections import OrderedDict
 import warnings
 
+from django.apps import apps
 from django.conf import settings
 from django.db.models.fields.related import ManyToManyRel
 from django.db.models.fields import AutoField, FieldDoesNotExist
 from django.db.models.fields.proxy import OrderWrt
-from django.db.models.loading import app_cache_ready, cache
 from django.utils import six
 from django.utils.functional import cached_property
 from django.utils.encoding import force_text, smart_text, python_2_unicode_compatible
+from django.utils.text import camel_case_to_spaces
 from django.utils.translation import activate, deactivate_all, get_language, string_concat
 
-# Calculate the verbose_name by converting from InitialCaps to "lowercase with spaces".
-get_verbose_name = lambda class_name: re.sub('(((?<=[a-z])[A-Z])|([A-Z](?![A-Z]|$)))', ' \\1', class_name).lower().strip()
 
 DEFAULT_NAMES = ('verbose_name', 'verbose_name_plural', 'db_table', 'ordering',
                  'unique_together', 'permissions', 'get_latest_by',
                  'order_with_respect_to', 'app_label', 'db_tablespace',
                  'abstract', 'managed', 'proxy', 'swappable', 'auto_created',
-                 'index_together', 'app_cache', 'default_permissions',
+                 'index_together', 'apps', 'default_permissions',
                  'select_on_save')
+
+
+def normalize_unique_together(unique_together):
+    """
+    unique_together can be either a tuple of tuples, or a single
+    tuple of two strings. Normalize it to a tuple of tuples, so that
+    calling code can uniformly expect that.
+    """
+    try:
+        if not unique_together:
+            return ()
+        first_element = next(iter(unique_together))
+        if not isinstance(first_element, (tuple, list)):
+            unique_together = (unique_together,)
+        # Normalize everything to tuples
+        return tuple(tuple(ut) for ut in unique_together)
+    except TypeError:
+        # If the value of unique_together isn't valid, return it
+        # verbatim; this will be picked up by the check framework later.
+        return unique_together
+
 
 @python_2_unicode_compatible
 class Options(object):
     def __init__(self, meta, app_label=None):
-        self.local_fields, self.local_many_to_many = [], []
+        self.local_fields = []
+        self.local_many_to_many = []
         self.virtual_fields = []
-        self.model_name, self.verbose_name = None, None
+        self.model_name = None
+        self.verbose_name = None
         self.verbose_name_plural = None
         self.db_table = ''
         self.ordering = []
@@ -39,13 +60,15 @@ class Options(object):
         self.select_on_save = False
         self.default_permissions = ('add', 'change', 'delete')
         self.permissions = []
-        self.object_name, self.app_label = None, app_label
+        self.object_name = None
+        self.app_label = app_label
         self.get_latest_by = None
         self.order_with_respect_to = None
         self.db_tablespace = settings.DEFAULT_TABLESPACE
         self.meta = meta
         self.pk = None
-        self.has_auto_field, self.auto_field = False, None
+        self.has_auto_field = False
+        self.auto_field = None
         self.abstract = False
         self.managed = True
         self.proxy = False
@@ -72,8 +95,17 @@ class Options(object):
         # from *other* models. Needed for some admin checks. Internal use only.
         self.related_fkey_lookups = []
 
-        # A custom AppCache to use, if you're making a separate model set.
-        self.app_cache = cache
+        # A custom app registry to use, if you're making a separate model set.
+        self.apps = apps
+
+    @property
+    def app_config(self):
+        # Don't go through get_app_config to avoid triggering imports.
+        return self.apps.app_configs.get(self.app_label)
+
+    @property
+    def installed(self):
+        return self.app_config is not None
 
     def contribute_to_class(self, cls, name):
         from django.db import connection
@@ -81,11 +113,10 @@ class Options(object):
 
         cls._meta = self
         self.model = cls
-        self.installed = re.sub('\.models$', '', cls.__module__) in settings.INSTALLED_APPS
         # First, construct the default values for these options.
         self.object_name = cls.__name__
         self.model_name = self.object_name.lower()
-        self.verbose_name = get_verbose_name(self.object_name)
+        self.verbose_name = camel_case_to_spaces(self.object_name)
 
         # Store the original user-defined values for each option,
         # for use when serializing the model definition
@@ -108,13 +139,8 @@ class Options(object):
                     setattr(self, attr_name, getattr(self.meta, attr_name))
                     self.original_attrs[attr_name] = getattr(self, attr_name)
 
-            # unique_together can be either a tuple of tuples, or a single
-            # tuple of two strings. Normalize it to a tuple of tuples, so that
-            # calling code can uniformly expect that.
             ut = meta_attrs.pop('unique_together', self.unique_together)
-            if ut and not isinstance(ut[0], (tuple, list)):
-                ut = (ut,)
-            self.unique_together = ut
+            self.unique_together = normalize_unique_together(ut)
 
             # verbose_name_plural is a special case because it uses a 's'
             # by default.
@@ -421,7 +447,7 @@ class Options(object):
             if hasattr(f, 'related'):
                 cache[f.name] = cache[f.attname] = (
                     f.related, None if f.model == self.model else f.model, True, False)
-        if app_cache_ready():
+        if apps.ready:
             self._name_map = cache
         return cache
 
@@ -497,7 +523,7 @@ class Options(object):
                     cache[obj] = model
         # Collect also objects which are in relation to some proxy child/parent of self.
         proxy_cache = cache.copy()
-        for klass in self.app_cache.get_models(include_auto_created=True, only_installed=False):
+        for klass in self.apps.get_models(include_auto_created=True):
             if not klass._meta.swapped:
                 for f in klass._meta.local_fields:
                     if f.rel and not isinstance(f.rel.to, six.string_types) and f.generate_reverse_relation:
@@ -540,14 +566,14 @@ class Options(object):
                     cache[obj] = parent
                 else:
                     cache[obj] = model
-        for klass in self.app_cache.get_models(only_installed=False):
+        for klass in self.apps.get_models():
             if not klass._meta.swapped:
                 for f in klass._meta.local_many_to_many:
                     if (f.rel
                             and not isinstance(f.rel.to, six.string_types)
                             and self == f.rel.to._meta):
                         cache[f.related] = None
-        if app_cache_ready():
+        if apps.ready:
             self._related_many_to_many_cache = cache
         return cache
 

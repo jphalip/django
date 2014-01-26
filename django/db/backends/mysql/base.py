@@ -43,7 +43,6 @@ from django.db.backends.mysql.introspection import DatabaseIntrospection
 from django.db.backends.mysql.validation import DatabaseValidation
 from django.utils.encoding import force_str, force_text
 from django.db.backends.mysql.schema import DatabaseSchemaEditor
-from django.utils.encoding import force_str
 from django.utils.functional import cached_property
 from django.utils.safestring import SafeBytes, SafeText
 from django.utils import six
@@ -172,6 +171,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     requires_explicit_null_ordering_when_grouping = True
     allows_primary_key_0 = False
     uses_savepoints = True
+    atomic_transactions = False
     supports_check_constraints = False
 
     def __init__(self, connection):
@@ -226,7 +226,7 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     def date_trunc_sql(self, lookup_type, field_name):
         fields = ['year', 'month', 'day', 'hour', 'minute', 'second']
-        format = ('%%Y-', '%%m', '-%%d', ' %%H:', '%%i', ':%%s') # Use double percents to escape.
+        format = ('%%Y-', '%%m', '-%%d', ' %%H:', '%%i', ':%%s')  # Use double percents to escape.
         format_def = ('0000-', '01', '-01', ' 00:', '00', ':00')
         try:
             i = fields.index(lookup_type) + 1
@@ -259,7 +259,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         else:
             params = []
         fields = ['year', 'month', 'day', 'hour', 'minute', 'second']
-        format = ('%%Y-', '%%m', '-%%d', ' %%H:', '%%i', ':%%s') # Use double percents to escape.
+        format = ('%%Y-', '%%m', '-%%d', ' %%H:', '%%i', ':%%s')  # Use double percents to escape.
         format_def = ('0000-', '01', '-01', ' 00:', '00', ':00')
         try:
             i = fields.index(lookup_type) + 1
@@ -300,7 +300,7 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     def quote_name(self, name):
         if name.startswith("`") and name.endswith("`"):
-            return name # Quoting once is enough.
+            return name  # Quoting once is enough.
         return "`%s`" % name
 
     def quote_parameter(self, value):
@@ -332,13 +332,15 @@ class DatabaseOperations(BaseDatabaseOperations):
         # Truncate already resets the AUTO_INCREMENT field from
         # MySQL version 5.0.13 onwards. Refs #16961.
         if self.connection.mysql_version < (5, 0, 13):
-            return ["%s %s %s %s %s;" %
-                    (style.SQL_KEYWORD('ALTER'),
+            return [
+                "%s %s %s %s %s;" % (
+                    style.SQL_KEYWORD('ALTER'),
                     style.SQL_KEYWORD('TABLE'),
                     style.SQL_TABLE(self.quote_name(sequence['table'])),
                     style.SQL_KEYWORD('AUTO_INCREMENT'),
                     style.SQL_FIELD('= 1'),
-                    ) for sequence in sequences]
+                ) for sequence in sequences
+            ]
         else:
             return []
 
@@ -385,6 +387,14 @@ class DatabaseOperations(BaseDatabaseOperations):
     def bulk_insert_sql(self, fields, num_values):
         items_sql = "(%s)" % ", ".join(["%s"] * len(fields))
         return "VALUES " + ", ".join([items_sql] * num_values)
+
+    def combine_expression(self, connector, sub_expressions):
+        """
+        MySQL requires special cases for ^ operators in query expressions
+        """
+        if connector == '^':
+            return 'POW(%s)' % ','.join(sub_expressions)
+        return super(DatabaseOperations, self).combine_expression(connector, sub_expressions)
 
 
 class DatabaseWrapper(BaseDatabaseWrapper):
@@ -484,7 +494,13 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         """
         Re-enable foreign key checks after they have been disabled.
         """
-        self.cursor().execute('SET foreign_key_checks=1')
+        # Override needs_rollback in case constraint_checks_disabled is
+        # nested inside transaction.atomic.
+        self.needs_rollback, needs_rollback = False, self.needs_rollback
+        try:
+            self.cursor().execute('SET foreign_key_checks=1')
+        finally:
+            self.needs_rollback = needs_rollback
 
     def check_constraints(self, table_names=None):
         """

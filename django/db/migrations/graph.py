@@ -63,14 +63,14 @@ class MigrationGraph(object):
             raise ValueError("Node %r not a valid node" % (node, ))
         return self.dfs(node, lambda x: self.dependents.get(x, set()))
 
-    def root_nodes(self):
+    def root_nodes(self, app=None):
         """
         Returns all root nodes - that is, nodes with no dependencies inside
         their app. These are the starting point for an app.
         """
         roots = set()
         for node in self.nodes:
-            if not any(key[0] == node[0] for key in self.dependencies.get(node, set())):
+            if not any(key[0] == node[0] for key in self.dependencies.get(node, set())) and (not app or app == node[0]):
                 roots.add(node)
         return roots
 
@@ -93,6 +93,7 @@ class MigrationGraph(object):
         Dynamic programming based depth first search, for finding dependencies.
         """
         cache = {}
+
         def _dfs(start, get_children, path):
             # If we already computed this, use that (dynamic programming)
             if (start, get_children) in cache:
@@ -143,6 +144,9 @@ class MigrationGraph(object):
         for node in plan:
             project_state = self.nodes[node].mutate_state(project_state)
         return project_state
+
+    def __contains__(self, node):
+        return node in self.nodes
 
 
 class CircularDependencyError(Exception):

@@ -96,6 +96,7 @@ The standard pattern for processing a form in a view looks like this:
 
    def contact(request):
        if request.method == 'POST': # If the form has been submitted...
+           # ContactForm was defined in the the previous section
            form = ContactForm(request.POST) # A form bound to the POST data
            if form.is_valid(): # All validation rules pass
                # Process the data in form.cleaned_data
@@ -324,6 +325,12 @@ attributes, which can be useful in your templates:
         example, the default ``label_suffix`` is a colon::
 
             <label for="id_email">Email address:</label>
+
+``{{ field.id_for_label }}``
+    The ID that will be used for this field (``id_email`` in the example
+    above). You may want to use this in lieu of ``label_tag`` if you are
+    constructing the label manually. It's also useful, for example, if you have
+    some inline JavaScript and want to avoid hardcoding the field's ID.
 
 ``{{ field.value }}``
     The value of the field. e.g ``someone@example.com``

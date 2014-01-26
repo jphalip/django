@@ -59,6 +59,7 @@ from django.db.backends.oracle.client import DatabaseClient
 from django.db.backends.oracle.creation import DatabaseCreation
 from django.db.backends.oracle.introspection import DatabaseIntrospection
 from django.db.backends.oracle.schema import DatabaseSchemaEditor
+from django.db.utils import InterfaceError
 from django.utils import six, timezone
 from django.utils.encoding import force_bytes, force_text
 from django.utils.functional import cached_property
@@ -96,12 +97,13 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     has_bulk_insert = True
     supports_tablespaces = True
     supports_sequence_reset = False
+    atomic_transactions = False
     supports_combined_alters = False
     max_index_name_length = 30
     nulls_order_largest = True
     requires_literal_defaults = True
     connection_persists_old_columns = True
-    nulls_order_largest = True
+    closed_cursor_error_class = InterfaceError
 
 
 class DatabaseOperations(BaseDatabaseOperations):
@@ -387,9 +389,11 @@ WHEN (new.%(col_name)s IS NULL)
             sequence_name = self._get_sequence_name(sequence_info['table'])
             table_name = self.quote_name(sequence_info['table'])
             column_name = self.quote_name(sequence_info['column'] or 'id')
-            query = _get_sequence_reset_sql() % {'sequence': sequence_name,
-                                                    'table': table_name,
-                                                    'column': column_name}
+            query = _get_sequence_reset_sql() % {
+                'sequence': sequence_name,
+                'table': table_name,
+                'column': column_name,
+            }
             sql.append(query)
         return sql
 
@@ -479,6 +483,8 @@ WHEN (new.%(col_name)s IS NULL)
             return 'BITAND(%s)' % ','.join(sub_expressions)
         elif connector == '|':
             raise NotImplementedError("Bit-wise or is not supported in Oracle.")
+        elif connector == '^':
+            return 'POWER(%s)' % ','.join(sub_expressions)
         return super(DatabaseOperations, self).combine_expression(connector, sub_expressions)
 
     def _get_sequence_name(self, table):
@@ -617,10 +623,13 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
         try:
             self.connection.stmtcachesize = 20
-        except:
+        except AttributeError:
             # Django docs specify cx_Oracle version 4.3.1 or higher, but
             # stmtcachesize is available only in 4.3.2 and up.
             pass
+        # Ensure all changes are preserved even when AUTOCOMMIT is False.
+        if not self.get_autocommit():
+            self.commit()
 
     def create_cursor(self):
         return FormatStylePlaceholderCursor(self.connection)
@@ -875,12 +884,10 @@ class FormatStylePlaceholderCursor(object):
     def fetchmany(self, size=None):
         if size is None:
             size = self.arraysize
-        return tuple(_rowfactory(r, self.cursor)
-                      for r in self.cursor.fetchmany(size))
+        return tuple(_rowfactory(r, self.cursor) for r in self.cursor.fetchmany(size))
 
     def fetchall(self):
-        return tuple(_rowfactory(r, self.cursor)
-                      for r in self.cursor.fetchall())
+        return tuple(_rowfactory(r, self.cursor) for r in self.cursor.fetchall())
 
     def var(self, *args):
         return VariableWrapper(self.cursor.var(*args))

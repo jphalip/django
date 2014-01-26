@@ -1,10 +1,18 @@
-import os
 from importlib import import_module
-from django.utils.functional import cached_property
-from django.db.models.loading import cache
+import os
+import sys
+
+from django.apps import apps
 from django.db.migrations.recorder import MigrationRecorder
 from django.db.migrations.graph import MigrationGraph
+from django.db.migrations.migration import Migration
+from django.db.migrations.state import ModelState
+from django.db.migrations import operations
+from django.utils import six
 from django.conf import settings
+
+
+MIGRATIONS_MODULE_NAME = 'migrations'
 
 
 class MigrationLoader(object):
@@ -32,17 +40,20 @@ class MigrationLoader(object):
     in memory.
     """
 
-    def __init__(self, connection):
+    def __init__(self, connection, load=True):
         self.connection = connection
         self.disk_migrations = None
         self.applied_migrations = None
+        if load:
+            self.build_graph()
 
     @classmethod
     def migrations_module(cls, app_label):
         if app_label in settings.MIGRATION_MODULES:
             return settings.MIGRATION_MODULES[app_label]
-        app = cache.get_app(app_label)
-        return ".".join(app.__name__.split(".")[:-1] + ["migrations"])
+        else:
+            app_package_name = apps.get_app_config(app_label).name
+            return '%s.%s' % (app_package_name, MIGRATIONS_MODULE_NAME)
 
     def load_disk(self):
         """
@@ -51,17 +62,19 @@ class MigrationLoader(object):
         self.disk_migrations = {}
         self.unmigrated_apps = set()
         self.migrated_apps = set()
-        for app in cache.get_apps():
+        for app_config in apps.get_app_configs():
+            if app_config.models_module is None:
+                continue
             # Get the migrations module directory
-            app_label = app.__name__.split(".")[-2]
-            module_name = self.migrations_module(app_label)
+            module_name = self.migrations_module(app_config.label)
+            was_loaded = module_name in sys.modules
             try:
                 module = import_module(module_name)
             except ImportError as e:
                 # I hate doing this, but I don't want to squash other import errors.
                 # Might be better to try a directory check directly.
-                if "No module named" in str(e) and "migrations" in str(e):
-                    self.unmigrated_apps.add(app_label)
+                if "No module named" in str(e) and MIGRATIONS_MODULE_NAME in str(e):
+                    self.unmigrated_apps.add(app_config.label)
                     continue
                 raise
             else:
@@ -71,7 +84,10 @@ class MigrationLoader(object):
                 # Module is not a package (e.g. migrations.py).
                 if not hasattr(module, '__path__'):
                     continue
-            self.migrated_apps.add(app_label)
+                # Force a reload if it's already loaded (tests need this)
+                if was_loaded:
+                    six.moves.reload_module(module)
+            self.migrated_apps.add(app_config.label)
             directory = os.path.dirname(module.__file__)
             # Scan for .py[c|o] files
             migration_names = set()
@@ -81,26 +97,32 @@ class MigrationLoader(object):
                     if import_name[0] not in "_.~":
                         migration_names.add(import_name)
             # Load them
+            south_style_migrations = False
             for migration_name in migration_names:
                 try:
                     migration_module = import_module("%s.%s" % (module_name, migration_name))
                 except ImportError as e:
                     # Ignore South import errors, as we're triggering them
                     if "south" in str(e).lower():
-                        continue
+                        south_style_migrations = True
+                        break
                     raise
                 if not hasattr(migration_module, "Migration"):
-                    raise BadMigrationError("Migration %s in app %s has no Migration class" % (migration_name, app_label))
+                    raise BadMigrationError("Migration %s in app %s has no Migration class" % (migration_name, app_config.label))
                 # Ignore South-style migrations
                 if hasattr(migration_module.Migration, "forwards"):
-                    continue
-                self.disk_migrations[app_label, migration_name] = migration_module.Migration(migration_name, app_label)
+                    south_style_migrations = True
+                    break
+                self.disk_migrations[app_config.label, migration_name] = migration_module.Migration(migration_name, app_config.label)
+            if south_style_migrations:
+                self.unmigrated_apps.add(app_config.label)
+
+    def get_migration(self, app_label, name_prefix):
+        "Gets the migration exactly named, or raises KeyError"
+        return self.graph.nodes[app_label, name_prefix]
 
     def get_migration_by_prefix(self, app_label, name_prefix):
         "Returns the migration(s) which match the given app label and name _prefix_"
-        # Make sure we have the disk data
-        if self.disk_migrations is None:
-            self.load_disk()
         # Do the search
         results = []
         for l, n in self.disk_migrations:
@@ -113,18 +135,17 @@ class MigrationLoader(object):
         else:
             return self.disk_migrations[results[0]]
 
-    @cached_property
-    def graph(self):
+    def build_graph(self):
         """
         Builds a migration dependency graph using both the disk and database.
+        You'll need to rebuild the graph if you apply migrations. This isn't
+        usually a problem as generally migration stuff runs in a one-shot process.
         """
-        # Make sure we have the disk data
-        if self.disk_migrations is None:
-            self.load_disk()
-        # And the database data
-        if self.applied_migrations is None:
-            recorder = MigrationRecorder(self.connection)
-            self.applied_migrations = recorder.applied_migrations()
+        # Load disk data
+        self.load_disk()
+        # Load database data
+        recorder = MigrationRecorder(self.connection)
+        self.applied_migrations = recorder.applied_migrations()
         # Do a first pass to separate out replacing and non-replacing migrations
         normal = {}
         replacing = {}
@@ -143,31 +164,83 @@ class MigrationLoader(object):
         # Carry out replacements if we can - that is, if all replaced migrations
         # are either unapplied or missing.
         for key, migration in replacing.items():
-            # Do the check
-            can_replace = True
-            for target in migration.replaces:
-                if target in self.applied_migrations:
-                    can_replace = False
-                    break
+            # Ensure this replacement migration is not in applied_migrations
+            self.applied_migrations.discard(key)
+            # Do the check. We can replace if all our replace targets are
+            # applied, or if all of them are unapplied.
+            applied_statuses = [(target in self.applied_migrations) for target in migration.replaces]
+            can_replace = all(applied_statuses) or (not any(applied_statuses))
             if not can_replace:
                 continue
             # Alright, time to replace. Step through the replaced migrations
             # and remove, repointing dependencies if needs be.
             for replaced in migration.replaces:
                 if replaced in normal:
+                    # We don't care if the replaced migration doesn't exist;
+                    # the usage pattern here is to delete things after a while.
                     del normal[replaced]
                 for child_key in reverse_dependencies.get(replaced, set()):
+                    if child_key in migration.replaces:
+                        continue
                     normal[child_key].dependencies.remove(replaced)
                     normal[child_key].dependencies.append(key)
             normal[key] = migration
+            # Mark the replacement as applied if all its replaced ones are
+            if all(applied_statuses):
+                self.applied_migrations.add(key)
         # Finally, make a graph and load everything into it
-        graph = MigrationGraph()
+        self.graph = MigrationGraph()
         for key, migration in normal.items():
-            graph.add_node(key, migration)
+            self.graph.add_node(key, migration)
         for key, migration in normal.items():
             for parent in migration.dependencies:
-                graph.add_dependency(key, parent)
-        return graph
+                # Special-case __first__, which means "the first migration" for
+                # migrated apps, and is ignored for unmigrated apps. It allows
+                # makemigrations to declare dependencies on apps before they
+                # even have migrations.
+                if parent[1] == "__first__" and parent not in self.graph:
+                    if parent[0] in self.unmigrated_apps:
+                        # This app isn't migrated, but something depends on it.
+                        # We'll add a fake initial migration for it into the
+                        # graph.
+                        app_config = apps.get_app_config(parent[0])
+                        ops = []
+                        for model in app_config.get_models():
+                            model_state = ModelState.from_model(model)
+                            ops.append(
+                                operations.CreateModel(
+                                    name=model_state.name,
+                                    fields=model_state.fields,
+                                    options=model_state.options,
+                                    bases=model_state.bases,
+                                )
+                            )
+                        new_migration = type(
+                            "FakeInitialMigration",
+                            (Migration, ),
+                            {"operations": ops},
+                        )(parent[1], parent[0])
+                        self.graph.add_node(parent, new_migration)
+                        self.applied_migrations.add(parent)
+                    elif parent[0] in self.migrated_apps:
+                        parent = list(self.graph.root_nodes(parent[0]))[0]
+                    else:
+                        raise ValueError("Dependency on unknown app %s" % parent[0])
+                self.graph.add_dependency(key, parent)
+
+    def detect_conflicts(self):
+        """
+        Looks through the loaded graph and detects any conflicts - apps
+        with more than one leaf migration. Returns a dict of the app labels
+        that conflict with the migration names that conflict.
+        """
+        seen_apps = {}
+        conflicting_apps = set()
+        for app_label, migration_name in self.graph.leaf_nodes():
+            if app_label in seen_apps:
+                conflicting_apps.add(app_label)
+            seen_apps.setdefault(app_label, set()).add(migration_name)
+        return dict((app_label, seen_apps[app_label]) for app_label in conflicting_apps)
 
 
 class BadMigrationError(Exception):
