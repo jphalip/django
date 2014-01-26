@@ -141,22 +141,23 @@ _______
 
 Some admin tests require Selenium, Firefox and Python >= 2.6 to work via a
 real, local Web browser. To allow those tests to run and not be skipped, you
-must install the selenium_ package (version > 2.35) into your Python path and
-run the tests with the ``--selenium=<BROWSER>`` option. For example, using
-Firefox (``--selenium=ff``):
+must install the selenium_ package (version > 2.38, but preferably the very
+latest version available) into your Python path and run the tests with the
+``--selenium=<BROWSER>`` option. For example, using Firefox
+(``--selenium=firefox``):
 
 .. code-block:: bash
 
-    ./runtests.py --settings=test_sqlite --selenium=ff admin_views.tests.SeleniumTests
+    ./runtests.py --selenium=firefox admin_views.tests.SeleniumTests
 
 Depending on which browsers are installed on your system, you may use the
 following values for the ``--selenium`` option:
 
-* ``ff``: Firefox
-* ``op``: Opera
+* ``firefox``: Firefox
+* ``opera``: Opera
 * ``ie``: Internet Explorer
-* ``gc``: Google Chrome
-* ``pj``: PhantomJS
+* ``chrome``: Google Chrome
+* ``phantomjs``: PhantomJS
 
 Remotely
 ________
@@ -178,36 +179,38 @@ the operating system. For example:
 
 .. code-block:: bash
 
-    REMOTE_USER=djangoproject REMOTE_KEY=195429ab-c384-40dc-b9dd-63ca850b53c6 ./runtests.py --settings=test_sqlite admin_views.tests.SeleniumTests.test_prepopulated_fields --selenium=ff --selenium-remote
+    REMOTE_USER=djangoproject REMOTE_KEY=195429ab-c384-40dc-b9dd-63ca850b53c6 ./runtests.py admin_views.tests.SeleniumTests.test_prepopulated_fields --selenium=firefox --selenium-remote
 
 The tests can then be viewed online at: https://saucelabs.com/u/djangoproject
 
 The available operating systems are:
 
-* ``s``: Windows 8
-* ``x``: Windows 7
-* ``e``: Windows xp
-* ``l``: Linux
-* ``m``: Mac OSX 10.6 (Snow Leopard)
-* ``i``: Mac OSX 10.8 (Mountain Lion)
+* ``Win8.1``: Windows 8.1
+* ``Win8``: Windows 8
+* ``Win7``: Windows 7
+* ``WinXP``: Windows xp
+* ``Linux``: Linux
+* ``Mac10.9``: Mac OSX 10.9 (Mavericks)
+* ``Mac10.8``: Mac OSX 10.8 (Mountain Lion)
+* ``Mac10.6``: Mac OSX 10.6 (Snow Leopard)
 
 The available browsers are:
 
-* ``ff``: Firefox
-* ``op``: Opera
+* ``firefox``: Firefox
+* ``opera``: Opera
 * ``ie``: Internet Explorer
-* ``gc``: Google Chrome
-* ``sa``: Safari
-* ``ip``: iPad
-* ``ih``: iPhone
-* ``an``: Android
+* ``chrome``: Google Chrome
+* ``safari``: Safari
+* ``ipad``: iPad
+* ``iphone``: iPhone
+* ``android``: Android
 
 Here are some possible combinations:
 
-* ``--selenium=ff19l``: Firefox 19 on Linux
-* ``--selenium=ie8e``: Internet Explorer on Windows XP
-* ``--selenium=sa5m``: Safari 5 on Mac OSX 10.6
-* ``--selenium=ihi``: iPhone simulator on Mac OSX 10.8
+* ``--selenium=firefox/v19/linux``: Firefox 19 on Linux
+* ``--selenium=ie/v8/WinXP``: Internet Explorer on Windows XP
+* ``--selenium=safari/v5/Mac10.6``: Safari 5 on Mac OSX 10.6
+* ``--selenium=iphone/v7``: iPhone mobile Safari on iOS 7
 
 For the full list of possible browser/OS combinations, please refer to
 the `dedicated page on Sauce Labs`_.

@@ -1,3 +1,4 @@
+import re
 import base64
 import httplib
 import json
@@ -23,7 +24,7 @@ class AdminSeleniumMetaClass(type):
                 if isinstance(value, types.FunctionType) and key.startswith('test'):
                     func = value
                     for index, spec in enumerate(all_specs):
-                        new_func_name = '%s__%s' % (key, spec)
+                        new_func_name = '%s__%s' % (key, spec.replace('/', '_'))
                         if index > 0:
                             new_func = types.FunctionType(func.func_code,
                                                           func.func_globals,
@@ -54,30 +55,41 @@ class AdminSeleniumWebDriverTestCase(StaticLiveServerCase):
         given browser spec.
         """
         platforms = {
-            's': 'Windows 8',
-            'x': 'Windows 7',
-            'e': 'Windows XP',
-            'l': 'Linux',
-            'm': 'Mac 10.6',
-            'i': 'Mac 10.8'
+            'win8.1': 'Windows 8.1',
+            'win8': 'Windows 8',
+            'win7': 'Windows 7',
+            'winxp': 'Windows XP',
+            'linux': 'Linux',
+            'mac10.9': 'Mac 10.9',
+            'mac10.8': 'Mac 10.8',
+            'mac10.6': 'Mac 10.6',
         }
         browsers = {
-            'ff': 'firefox',
-            'op': 'opera',
+            'firefox': 'firefox',
+            'opera': 'opera',
             'ie': 'internet explorer',
-            'sa': 'safari',
-            'ip': 'ipad',
-            'ih': 'iphone',
-            'an': 'android',
-            'gc': 'chrome'
+            'safari': 'safari',
+            'ipad': 'ipad',
+            'iphone': 'iphone',
+            'android': 'android',
+            'chrome': 'chrome'
         }
-        browser = browsers[spec[:2]]
-        if spec[-1] in platforms:
-            platform = platforms.get(spec[-1])
-            version = spec[2:-1]
-        else:
-            platform = None
-            version = spec[2:]
+
+        version_pattern = re.compile('^v(\d*)$')
+        version = None
+        browser = 'firefox'
+        platform = None
+        bits = spec.split('/')
+        for bit in bits:
+            if bit.lower() in browsers:
+                browser = browsers[bit.lower()]
+            elif bit.lower() in platforms:
+                platform = platforms[bit.lower()]
+            else:
+                version_match = version_pattern.match(bit)
+                if version_match:
+                    version = version_match.group(1)
+
         caps = {
             'browserName': browser,
             'version': version,
@@ -96,11 +108,12 @@ class AdminSeleniumWebDriverTestCase(StaticLiveServerCase):
         browser spec.
         """
         browsers = {
-            'ff': 'selenium.webdriver.Firefox',
-            'op': 'selenium.webdriver.Opera',
+            'firefox': 'selenium.webdriver.Firefox',
+            'safari': 'selenium.webdriver.Safari',
+            'opera': 'selenium.webdriver.Opera',
             'ie': 'selenium.webdriver.Ie',
-            'gc': 'selenium.webdriver.Chrome',
-            'pj': 'selenium.webdriver.PhantomJS',
+            'chrome': 'selenium.webdriver.Chrome',
+            'phantomjs': 'selenium.webdriver.PhantomJS',
         }
         return import_by_path(browsers[spec[:2]])
 
