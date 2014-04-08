@@ -19,7 +19,8 @@ from django import forms
 from django.core import exceptions, validators, checks
 from django.utils.datastructures import DictWrapper
 from django.utils.dateparse import parse_date, parse_datetime, parse_time
-from django.utils.functional import curry, total_ordering, Promise
+from django.utils.deprecation import RemovedInDjango19Warning
+from django.utils.functional import cached_property, curry, total_ordering, Promise
 from django.utils.text import capfirst
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
@@ -64,7 +65,7 @@ class FieldDoesNotExist(Exception):
 
 # A guide to Field parameters:
 #
-#   * name:      The name of the field specifed in the model.
+#   * name:      The name of the field specified in the model.
 #   * attname:   The attribute to use on the model object. This is the same as
 #                "name", except in the case of ForeignKeys, where "_id" is
 #                appended.
@@ -105,6 +106,8 @@ class Field(RegisterLookupMixin):
         'blank': _('This field cannot be blank.'),
         'unique': _('%(model_name)s with this %(field_label)s '
                     'already exists.'),
+        'unique_for_date': _("%(field_label)s must be unique for "
+                             "%(date_field_label)s %(lookup_type)s."),
     }
     class_lookups = default_lookups.copy()
 
@@ -154,7 +157,6 @@ class Field(RegisterLookupMixin):
             Field.creation_counter += 1
 
         self._validators = validators  # Store for deconstruction later
-        self.validators = self.default_validators + validators
 
         messages = {}
         for c in reversed(self.__class__.__mro__):
@@ -189,15 +191,34 @@ class Field(RegisterLookupMixin):
         return errors
 
     def _check_field_name(self):
-        """ Check if field name is valid (i. e. not ending with an underscore).
-        """
+        """ Check if field name is valid, i.e. 1) does not end with an
+        underscore, 2) does not contain "__" and 3) is not "pk". """
+
         if self.name.endswith('_'):
             return [
                 checks.Error(
-                    'Field names must not end with underscores.',
+                    'Field names must not end with an underscore.',
                     hint=None,
                     obj=self,
-                    id='E001',
+                    id='fields.E001',
+                )
+            ]
+        elif '__' in self.name:
+            return [
+                checks.Error(
+                    'Field names must not contain "__".',
+                    hint=None,
+                    obj=self,
+                    id='fields.E002',
+                )
+            ]
+        elif self.name == 'pk':
+            return [
+                checks.Error(
+                    "'pk' is a reserved word that cannot be used as a field name.",
+                    hint=None,
+                    obj=self,
+                    id='fields.E003',
                 )
             ]
         else:
@@ -209,10 +230,10 @@ class Field(RegisterLookupMixin):
                     not is_iterable(self.choices)):
                 return [
                     checks.Error(
-                        '"choices" must be an iterable (e.g., a list or tuple).',
+                        "'choices' must be an iterable (e.g., a list or tuple).",
                         hint=None,
                         obj=self,
-                        id='E033',
+                        id='fields.E004',
                     )
                 ]
             elif any(isinstance(choice, six.string_types) or
@@ -220,13 +241,11 @@ class Field(RegisterLookupMixin):
                      for choice in self.choices):
                 return [
                     checks.Error(
-                        ('All "choices" elements must be a tuple of two '
-                         'elements (the first one is the actual value '
-                         'to be stored and the second element is '
-                         'the human-readable name).'),
+                        ("'choices' must be an iterable containing "
+                         "(actual value, human readable name) tuples."),
                         hint=None,
                         obj=self,
-                        id='E034',
+                        id='fields.E005',
                     )
                 ]
             else:
@@ -238,10 +257,10 @@ class Field(RegisterLookupMixin):
         if self.db_index not in (None, True, False):
             return [
                 checks.Error(
-                    '"db_index" must be either None, True or False.',
+                    "'db_index' must be None, True or False.",
                     hint=None,
                     obj=self,
-                    id='E035',
+                    id='fields.E006',
                 )
             ]
         else:
@@ -256,10 +275,10 @@ class Field(RegisterLookupMixin):
             return [
                 checks.Error(
                     'Primary keys must not have null=True.',
-                    hint=('Set null=False on the field or '
+                    hint=('Set null=False on the field, or '
                           'remove primary_key=True argument.'),
                     obj=self,
-                    id='E036',
+                    id='fields.E007',
                 )
             ]
         else:
@@ -287,7 +306,7 @@ class Field(RegisterLookupMixin):
          * top-level classes, top-level functions - will be referenced by their full import path
          * Storage instances - these have their own deconstruct() method
 
-        This is because the values here must be serialised into a text format
+        This is because the values here must be serialized into a text format
         (possibly new Python code, possibly JSON) and these are the only types
         with encoding handlers defined.
 
@@ -427,6 +446,12 @@ class Field(RegisterLookupMixin):
         """
         return value
 
+    @cached_property
+    def validators(self):
+        # Some validators can't be created at field initialization time.
+        # This method provides a way to delay their creation until required.
+        return self.default_validators + self._validators
+
     def run_validators(self, value):
         if value in self.empty_values:
             return
@@ -491,7 +516,7 @@ class Field(RegisterLookupMixin):
         connection.
         """
         # The default implementation of this method looks at the
-        # backend-specific DATA_TYPES dictionary, looking up the field by its
+        # backend-specific data_types dictionary, looking up the field by its
         # "internal type".
         #
         # A Field class can implement the get_internal_type() method to specify
@@ -505,24 +530,20 @@ class Field(RegisterLookupMixin):
         # mapped to one of the built-in Django field types. In this case, you
         # can implement db_type() instead of get_internal_type() to specify
         # exactly which wacky database column type you want to use.
-        params = self.db_parameters(connection)
-        if params['type']:
-            if params['check']:
-                return "%s CHECK (%s)" % (params['type'], params['check'])
-            else:
-                return params['type']
-        return None
+        data = DictWrapper(self.__dict__, connection.ops.quote_name, "qn_")
+        try:
+            return connection.creation.data_types[self.get_internal_type()] % data
+        except KeyError:
+            return None
 
     def db_parameters(self, connection):
         """
-        Replacement for db_type, providing a range of different return
-        values (type, checks)
+        Extension of db_type(), providing a range of different return
+        values (type, checks).
+        This will look at db_type(), allowing custom model fields to override it.
         """
         data = DictWrapper(self.__dict__, connection.ops.quote_name, "qn_")
-        try:
-            type_string = connection.creation.data_types[self.get_internal_type()] % data
-        except KeyError:
-            type_string = None
+        type_string = self.db_type(connection)
         try:
             check_string = connection.creation.data_type_check_constraints[self.get_internal_type()] % data
         except KeyError:
@@ -721,11 +742,11 @@ class Field(RegisterLookupMixin):
             lst = [(getattr(x, self.rel.get_related_field().attname),
                    smart_text(x))
                    for x in rel_model._default_manager.complex_filter(
-                       self.rel.limit_choices_to)]
+                       self.get_limit_choices_to())]
         else:
             lst = [(x._get_pk_val(), smart_text(x))
                    for x in rel_model._default_manager.complex_filter(
-                       self.rel.limit_choices_to)]
+                       self.get_limit_choices_to())]
         return first_choice + lst
 
     def get_choices_default(self):
@@ -843,10 +864,10 @@ class AutoField(Field):
         if not self.primary_key:
             return [
                 checks.Error(
-                    'The field must have primary_key=True, because it is an AutoField.',
+                    'AutoFields must set primary_key=True.',
                     hint=None,
                     obj=self,
-                    id='E048',
+                    id='fields.E100',
                 ),
             ]
         else:
@@ -919,10 +940,10 @@ class BooleanField(Field):
         if getattr(self, 'null', False):
             return [
                 checks.Error(
-                    'BooleanFields do not acceps null values.',
+                    'BooleanFields do not accept null values.',
                     hint='Use a NullBooleanField instead.',
                     obj=self,
-                    id='E037',
+                    id='fields.E110',
                 )
             ]
         else:
@@ -988,10 +1009,10 @@ class CharField(Field):
 
     def check(self, **kwargs):
         errors = super(CharField, self).check(**kwargs)
-        errors.extend(self._check_max_length_attibute(**kwargs))
+        errors.extend(self._check_max_length_attribute(**kwargs))
         return errors
 
-    def _check_max_length_attibute(self, **kwargs):
+    def _check_max_length_attribute(self, **kwargs):
         try:
             max_length = int(self.max_length)
             if max_length <= 0:
@@ -999,19 +1020,19 @@ class CharField(Field):
         except TypeError:
             return [
                 checks.Error(
-                    'The field must have "max_length" attribute.',
+                    "CharFields must define a 'max_length' attribute.",
                     hint=None,
                     obj=self,
-                    id='E038',
+                    id='fields.E120',
                 )
             ]
         except ValueError:
             return [
                 checks.Error(
-                    '"max_length" must be a positive integer.',
+                    "'max_length' must be a positive integer.",
                     hint=None,
                     obj=self,
-                    id='E039',
+                    id='fields.E121',
                 )
             ]
         else:
@@ -1284,24 +1305,16 @@ class DecimalField(Field):
 
     def check(self, **kwargs):
         errors = super(DecimalField, self).check(**kwargs)
-        errors.extend(self._check_decimal_places_and_max_digits(**kwargs))
+
+        digits_errors = self._check_decimal_places()
+        digits_errors.extend(self._check_max_digits())
+        if not digits_errors:
+            errors.extend(self._check_decimal_places_and_max_digits(**kwargs))
+        else:
+            errors.extend(digits_errors)
         return errors
 
-    def _check_decimal_places_and_max_digits(self, **kwargs):
-        errors = self.__check_decimal_places()
-        errors += self.__check_max_digits()
-        if not errors and int(self.decimal_places) > int(self.max_digits):
-            errors.append(
-                checks.Error(
-                    '"max_digits" must be greater or equal to "decimal_places".',
-                    hint=None,
-                    obj=self,
-                    id='E040',
-                )
-            )
-        return errors
-
-    def __check_decimal_places(self):
+    def _check_decimal_places(self):
         try:
             decimal_places = int(self.decimal_places)
             if decimal_places < 0:
@@ -1309,25 +1322,25 @@ class DecimalField(Field):
         except TypeError:
             return [
                 checks.Error(
-                    'The field requires a "decimal_places" attribute.',
+                    "DecimalFields must define a 'decimal_places' attribute.",
                     hint=None,
                     obj=self,
-                    id='E041',
+                    id='fields.E130',
                 )
             ]
         except ValueError:
             return [
                 checks.Error(
-                    '"decimal_places" attribute must be a non-negative integer.',
+                    "'decimal_places' must be a non-negative integer.",
                     hint=None,
                     obj=self,
-                    id='E042',
+                    id='fields.E131',
                 )
             ]
         else:
             return []
 
-    def __check_max_digits(self):
+    def _check_max_digits(self):
         try:
             max_digits = int(self.max_digits)
             if max_digits <= 0:
@@ -1335,29 +1348,41 @@ class DecimalField(Field):
         except TypeError:
             return [
                 checks.Error(
-                    'The field requires a "max_digits" attribute.',
+                    "DecimalFields must define a 'max_digits' attribute.",
                     hint=None,
                     obj=self,
-                    id='E043',
+                    id='fields.E132',
                 )
             ]
         except ValueError:
             return [
                 checks.Error(
-                    '"max_digits" attribute must be a positive integer.',
+                    "'max_digits' must be a positive integer.",
                     hint=None,
                     obj=self,
-                    id='E044',
+                    id='fields.E133',
                 )
             ]
         else:
             return []
 
+    def _check_decimal_places_and_max_digits(self, **kwargs):
+        if int(self.decimal_places) > int(self.max_digits):
+            return [
+                checks.Error(
+                    "'max_digits' must be greater or equal to 'decimal_places'.",
+                    hint=None,
+                    obj=self,
+                    id='fields.E134',
+                )
+            ]
+        return []
+
     def deconstruct(self):
         name, path, args, kwargs = super(DecimalField, self).deconstruct()
-        if self.max_digits:
+        if self.max_digits is not None:
             kwargs['max_digits'] = self.max_digits
-        if self.decimal_places:
+        if self.decimal_places is not None:
             kwargs['decimal_places'] = self.decimal_places
         return name, path, args, kwargs
 
@@ -1460,10 +1485,10 @@ class FilePathField(Field):
         if not self.allow_files and not self.allow_folders:
             return [
                 checks.Error(
-                    'The field must have either "allow_files" or "allow_folders" set to True.',
+                    "FilePathFields must have either 'allow_files' or 'allow_folders' set to True.",
                     hint=None,
                     obj=self,
-                    id='E045',
+                    id='fields.E140',
                 )
             ]
         return []
@@ -1541,6 +1566,19 @@ class IntegerField(Field):
     }
     description = _("Integer")
 
+    @cached_property
+    def validators(self):
+        # These validators can't be added at field initialization time since
+        # they're based on values retrieved from `connection`.
+        range_validators = []
+        internal_type = self.get_internal_type()
+        min_value, max_value = connection.ops.integer_field_range(internal_type)
+        if min_value is not None:
+            range_validators.append(validators.MinValueValidator(min_value))
+        if max_value is not None:
+            range_validators.append(validators.MaxValueValidator(max_value))
+        return super(IntegerField, self).validators + range_validators
+
     def get_prep_value(self, value):
         value = super(IntegerField, self).get_prep_value(value)
         if value is None:
@@ -1595,7 +1633,7 @@ class IPAddressField(Field):
 
     def __init__(self, *args, **kwargs):
         warnings.warn("IPAddressField has been deprecated. Use GenericIPAddressField instead.",
-                      PendingDeprecationWarning)
+                      RemovedInDjango19Warning)
         kwargs['max_length'] = 15
         super(IPAddressField, self).__init__(*args, **kwargs)
 
@@ -1638,11 +1676,11 @@ class GenericIPAddressField(Field):
         if not getattr(self, 'null', False) and getattr(self, 'blank', False):
             return [
                 checks.Error(
-                    ('The field cannot accept blank values if null values '
-                     'are not allowed, as blank values are stored as null.'),
+                    ('GenericIPAddressFields cannot have blank=True if null=False, '
+                     'as blank values are stored as nulls.'),
                     hint=None,
                     obj=self,
-                    id='E046',
+                    id='fields.E150',
                 )
             ]
         return []
@@ -1827,7 +1865,10 @@ class TextField(Field):
         return smart_text(value)
 
     def formfield(self, **kwargs):
-        defaults = {'widget': forms.Textarea}
+        # Passing max_length to forms.CharField means that the value's length
+        # will be validated twice. This is considered acceptable since we want
+        # the value in the form field (to pass into widget for example).
+        defaults = {'max_length': self.max_length, 'widget': forms.Textarea}
         defaults.update(kwargs)
         return super(TextField, self).formfield(**defaults)
 

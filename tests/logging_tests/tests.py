@@ -7,6 +7,7 @@ from django.core import mail
 from django.test import TestCase, RequestFactory, override_settings
 from django.test.utils import patch_logger
 from django.utils.encoding import force_text
+from django.utils.deprecation import RemovedInNextVersionWarning
 from django.utils.log import (CallbackFilter, RequireDebugFalse,
     RequireDebugTrue)
 from django.utils.six import StringIO
@@ -86,8 +87,8 @@ class DefaultLoggingTest(TestCase):
 
 class WarningLoggerTests(TestCase):
     """
-    Tests that warnings output for DeprecationWarnings is enabled
-    and captured to the logging system
+    Tests that warnings output for RemovedInDjangoXXWarning (XX being the next
+    Django version) is enabled and captured to the logging system
     """
     def setUp(self):
         # If tests are invoke with "-Wall" (or any -W flag actually) then
@@ -118,14 +119,24 @@ class WarningLoggerTests(TestCase):
 
     @override_settings(DEBUG=True)
     def test_warnings_capture(self):
-        warnings.warn('Foo Deprecated', DeprecationWarning)
+        warnings.warn('Foo Deprecated', RemovedInNextVersionWarning)
         output = force_text(self.outputs[0].getvalue())
         self.assertTrue('Foo Deprecated' in output)
 
     def test_warnings_capture_debug_false(self):
-        warnings.warn('Foo Deprecated', DeprecationWarning)
+        warnings.warn('Foo Deprecated', RemovedInNextVersionWarning)
         output = force_text(self.outputs[0].getvalue())
         self.assertFalse('Foo Deprecated' in output)
+
+    @override_settings(DEBUG=True)
+    def test_error_filter_still_raises(self):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                'error',
+                category=RemovedInNextVersionWarning
+            )
+            with self.assertRaises(RemovedInNextVersionWarning):
+                warnings.warn('Foo Deprecated', RemovedInNextVersionWarning)
 
 
 class CallbackFilterTest(TestCase):
@@ -333,7 +344,7 @@ class SettingsConfigTest(AdminScriptTestCase):
         # validate is just an example command to trigger settings configuration
         out, err = self.run_manage(['validate'])
         self.assertNoOutput(err)
-        self.assertOutput(out, "System check identified no issues.")
+        self.assertOutput(out, "System check identified no issues (0 silenced).")
 
 
 def dictConfig(config):
@@ -352,10 +363,8 @@ class SetupConfigureLogging(TestCase):
         self.assertTrue(dictConfig.called)
 
 
-@override_settings(DEBUG=True)
+@override_settings(DEBUG=True, ROOT_URLCONF='logging_tests.urls')
 class SecurityLoggerTest(TestCase):
-
-    urls = 'logging_tests.urls'
 
     def test_suspicious_operation_creates_log_message(self):
         with patch_logger('django.security.SuspiciousOperation', 'error') as calls:

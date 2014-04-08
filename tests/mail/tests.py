@@ -39,7 +39,7 @@ class HeadersCheckMixin(object):
         Check that :param message: has all :param headers: headers.
 
         :param message: can be an instance of an email.Message subclass or a
-        string with the contens of an email message.
+        string with the contents of an email message.
         :param headers: should be a set of (header-name, header-value) tuples.
         """
         if isinstance(message, binary_type):
@@ -103,7 +103,7 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
 
     def test_space_continuation(self):
         """
-        Test for space continuation character in long (ascii) subject headers (#7747)
+        Test for space continuation character in long (ASCII) subject headers (#7747)
         """
         email = EmailMessage('Long subject lines that get wrapped should contain a space continuation character to get expected behavior in Outlook and Thunderbird', 'Content', 'from@example.com', ['to@example.com'])
         message = email.message()
@@ -192,7 +192,7 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
         SafeMIMEMultipart as well
         """
         headers = {"Date": "Fri, 09 Nov 2001 01:08:47 -0000", "Message-ID": "foo"}
-        subject, from_email, to = 'hello', 'from@example.com', '"Sürname, Firstname" <to@example.com>'
+        from_email, to = 'from@example.com', '"Sürname, Firstname" <to@example.com>'
         text_content = 'This is an important message.'
         html_content = '<p>This is an <strong>important</strong> message.</p>'
         msg = EmailMultiAlternatives('Message from Firstname Sürname', text_content, from_email, [to], headers=headers)
@@ -630,13 +630,34 @@ class BaseEmailBackendTests(HeadersCheckMixin, object):
 
     def test_close_connection(self):
         """
-        Test that connection can be closed (even when not explicitely opened)
+        Test that connection can be closed (even when not explicitly opened)
         """
         conn = mail.get_connection(username='', password='')
         try:
             conn.close()
         except Exception as e:
             self.fail("close() unexpectedly raised an exception: %s" % e)
+
+    def test_use_as_contextmanager(self):
+        """
+        Test that the connection can be used as a contextmanager.
+        """
+        opened = [False]
+        closed = [False]
+        conn = mail.get_connection(username='', password='')
+
+        def open():
+            opened[0] = True
+        conn.open = open
+
+        def close():
+            closed[0] = True
+        conn.close = close
+        with conn as same_conn:
+            self.assertTrue(opened[0])
+            self.assertIs(same_conn, conn)
+            self.assertFalse(closed[0])
+        self.assertTrue(closed[0])
 
 
 class LocmemBackendTests(BaseEmailBackendTests, SimpleTestCase):

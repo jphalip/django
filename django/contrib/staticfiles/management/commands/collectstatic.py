@@ -1,7 +1,6 @@
 from __future__ import unicode_literals
 
 import os
-import sys
 from collections import OrderedDict
 from optparse import make_option
 
@@ -82,12 +81,8 @@ class Command(NoArgsCommand):
 
         Split off from handle_noargs() to facilitate testing.
         """
-        if self.symlink:
-            if sys.platform == 'win32':
-                raise CommandError("Symlinking is not supported by this "
-                                   "platform (%s)." % sys.platform)
-            if not self.local:
-                raise CommandError("Can't symlink to a remote destination.")
+        if self.symlink and not self.local:
+            raise CommandError("Can't symlink to a remote destination.")
 
         if self.clear:
             self.clear_dir('')
@@ -149,8 +144,7 @@ class Command(NoArgsCommand):
             'location as specified in your settings'
         )
 
-        if (isinstance(self.storage._wrapped, FileSystemStorage) and
-                self.storage.location):
+        if self.is_local_storage() and self.storage.location:
             destination_path = self.storage.location
             message.append(':\n\n    %s\n\n' % destination_path)
         else:
@@ -196,6 +190,9 @@ class Command(NoArgsCommand):
         """
         if self.verbosity >= level:
             self.stdout.write(msg)
+
+    def is_local_storage(self):
+        return isinstance(self.storage, FileSystemStorage)
 
     def clear_dir(self, path):
         """
@@ -279,7 +276,20 @@ class Command(NoArgsCommand):
                 os.makedirs(os.path.dirname(full_path))
             except OSError:
                 pass
-            os.symlink(source_path, full_path)
+            try:
+                if os.path.lexists(full_path):
+                    os.unlink(full_path)
+                os.symlink(source_path, full_path)
+            except AttributeError:
+                import platform
+                raise CommandError("Symlinking is not supported by Python %s." %
+                                   platform.python_version())
+            except NotImplementedError:
+                import platform
+                raise CommandError("Symlinking is not supported in this "
+                                   "platform (%s)." % platform.platform())
+            except OSError as e:
+                raise CommandError(e)
         if prefixed_path not in self.symlinked_files:
             self.symlinked_files.append(prefixed_path)
 
@@ -302,5 +312,5 @@ class Command(NoArgsCommand):
             self.log("Copying '%s'" % source_path, level=1)
             with source_storage.open(path) as source_file:
                 self.storage.save(prefixed_path, source_file)
-        if not prefixed_path in self.copied_files:
+        if prefixed_path not in self.copied_files:
             self.copied_files.append(prefixed_path)

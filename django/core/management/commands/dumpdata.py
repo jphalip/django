@@ -7,6 +7,7 @@ from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
 from django.core import serializers
 from django.db import router, DEFAULT_DB_ALIAS
+from django.utils.deprecation import RemovedInDjango19Warning
 
 
 class Command(BaseCommand):
@@ -23,7 +24,7 @@ class Command(BaseCommand):
             help='An app_label or app_label.ModelName to exclude '
                  '(use multiple --exclude to exclude multiple apps/models).'),
         make_option('-n', '--natural', action='store_true', dest='use_natural_keys', default=False,
-            help='Use natural keys if they are available.'),
+            help='Use natural keys if they are available (deprecated: use --natural-foreign instead).'),
         make_option('--natural-foreign', action='store_true', dest='use_natural_foreign_keys', default=False,
             help='Use natural foreign keys if they are available.'),
         make_option('--natural-primary', action='store_true', dest='use_natural_primary_keys', default=False,
@@ -35,6 +36,8 @@ class Command(BaseCommand):
             help="Only dump objects with given primary keys. "
                  "Accepts a comma separated list of keys. "
                  "This option will only work when you specify one model."),
+        make_option('-o', '--output', default=None, dest='output',
+            help='Specifies file to which the output is written.'),
     )
     help = ("Output the contents of the database as a fixture of the given "
             "format (using each model's default manager unless --all is "
@@ -46,11 +49,12 @@ class Command(BaseCommand):
         indent = options.get('indent')
         using = options.get('database')
         excludes = options.get('exclude')
+        output = options.get('output')
         show_traceback = options.get('traceback')
         use_natural_keys = options.get('use_natural_keys')
         if use_natural_keys:
             warnings.warn("``--natural`` is deprecated; use ``--natural-foreign`` instead.",
-                PendingDeprecationWarning)
+                RemovedInDjango19Warning)
         use_natural_foreign_keys = options.get('use_natural_foreign_keys') or use_natural_keys
         use_natural_primary_keys = options.get('use_natural_primary_keys')
         use_base_manager = options.get('use_base_manager')
@@ -65,9 +69,8 @@ class Command(BaseCommand):
         excluded_models = set()
         for exclude in excludes:
             if '.' in exclude:
-                app_label, model_name = exclude.split('.', 1)
                 try:
-                    model = apps.get_model(app_label, model_name)
+                    model = apps.get_model(exclude)
                 except LookupError:
                     raise CommandError('Unknown model in excludes: %s' % exclude)
                 excluded_models.add(model)
@@ -98,13 +101,18 @@ class Command(BaseCommand):
                     if app_config.models_module is None or app_config in excluded_apps:
                         continue
                     try:
-                        model = apps.get_model(app_label, model_label)
+                        model = app_config.get_model(model_label)
                     except LookupError:
                         raise CommandError("Unknown model: %s.%s" % (app_label, model_label))
 
                     app_list_value = app_list.setdefault(app_config, [])
-                    if model not in app_list_value:
-                        app_list_value.append(model)
+
+                    # We may have previously seen a "all-models" request for
+                    # this app (no model qualifier was given). In this case
+                    # there is no need adding specific models to the list.
+                    if app_list_value is not None:
+                        if model not in app_list_value:
+                            app_list_value.append(model)
                 except ValueError:
                     if primary_keys:
                         raise CommandError("You can only use --pks option with one model")
@@ -150,7 +158,7 @@ class Command(BaseCommand):
             serializers.serialize(format, get_objects(), indent=indent,
                     use_natural_foreign_keys=use_natural_foreign_keys,
                     use_natural_primary_keys=use_natural_primary_keys,
-                    stream=self.stdout)
+                    stream=open(output, 'w') if output else self.stdout)
         except Exception as e:
             if show_traceback:
                 raise
@@ -177,7 +185,7 @@ def sort_dependencies(app_list):
             if hasattr(model, 'natural_key'):
                 deps = getattr(model.natural_key, 'dependencies', [])
                 if deps:
-                    deps = [apps.get_model(*d.split('.')) for d in deps]
+                    deps = [apps.get_model(dep) for dep in deps]
             else:
                 deps = []
 

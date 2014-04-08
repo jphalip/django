@@ -39,7 +39,12 @@ class MigrationQuestioner(object):
         except ImportError:
             return self.defaults.get("ask_initial", False)
         else:
-            filenames = os.listdir(os.path.dirname(migrations_module.__file__))
+            if hasattr(migrations_module, "__file__"):
+                filenames = os.listdir(os.path.dirname(migrations_module.__file__))
+            elif hasattr(migrations_module, "__path__"):
+                if len(migrations_module.__path__) > 1:
+                    return False
+                filenames = os.listdir(list(migrations_module.__path__)[0])
             return not any(x.endswith(".py") for x in filenames if x != "__init__.py")
 
     def ask_not_null_addition(self, field_name, model_name):
@@ -50,6 +55,10 @@ class MigrationQuestioner(object):
     def ask_rename(self, model_name, old_name, new_name, field_instance):
         "Was this field really renamed?"
         return self.defaults.get("ask_rename", False)
+
+    def ask_rename_model(self, old_model_state, new_model_state):
+        "Was this model really renamed?"
+        return self.defaults.get("ask_rename_model", False)
 
     def ask_merge(self, app_label):
         "Do you really want to merge these migrations?"
@@ -117,6 +126,10 @@ class InteractiveMigrationQuestioner(MigrationQuestioner):
     def ask_rename(self, model_name, old_name, new_name, field_instance):
         "Was this field really renamed?"
         return self._boolean_input("Did you rename %s.%s to %s.%s (a %s)? [y/N]" % (model_name, old_name, model_name, new_name, field_instance.__class__.__name__), False)
+
+    def ask_rename_model(self, old_model_state, new_model_state):
+        "Was this model really renamed?"
+        return self._boolean_input("Did you rename the %s.%s model to %s? [y/N]" % (old_model_state.app_label, old_model_state.name, new_model_state.name), False)
 
     def ask_merge(self, app_label):
         return self._boolean_input(

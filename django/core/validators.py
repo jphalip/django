@@ -20,24 +20,34 @@ class RegexValidator(object):
     regex = ''
     message = _('Enter a valid value.')
     code = 'invalid'
+    inverse_match = False
+    flags = 0
 
-    def __init__(self, regex=None, message=None, code=None):
+    def __init__(self, regex=None, message=None, code=None, inverse_match=None, flags=None):
         if regex is not None:
             self.regex = regex
         if message is not None:
             self.message = message
         if code is not None:
             self.code = code
+        if inverse_match is not None:
+            self.inverse_match = inverse_match
+        if flags is not None:
+            self.flags = flags
+        if self.flags and not isinstance(self.regex, six.string_types):
+            raise TypeError("If the flags are set, regex must be a regular expression string.")
 
         # Compile the regex if it was not passed pre-compiled.
         if isinstance(self.regex, six.string_types):
-            self.regex = re.compile(self.regex)
+            self.regex = re.compile(self.regex, self.flags)
 
     def __call__(self, value):
         """
-        Validates that the input matches the regular expression.
+        Validates that the input matches the regular expression
+        if inverse_match is False, otherwise raises ValidationError.
         """
-        if not self.regex.search(force_text(value)):
+        if not (self.inverse_match is not bool(self.regex.search(
+                force_text(value)))):
             raise ValidationError(self.message, code=self.code)
 
     def __eq__(self, other):
@@ -104,9 +114,11 @@ class EmailValidator(object):
         r'|^"([\001-\010\013\014\016-\037!#-\[\]-\177]|\\[\001-\011\013\014\016-\177])*"$)',  # quoted-string
         re.IGNORECASE)
     domain_regex = re.compile(
-        r'(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}|[A-Z0-9-]{2,})$'  # domain
-        # literal form, ipv4 address (SMTP 4.1.3)
-        r'|^\[(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}\]$',
+        r'(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}|[A-Z0-9-]{2,})$',
+        re.IGNORECASE)
+    literal_regex = re.compile(
+        # literal form, ipv4 or ipv6 address (SMTP 4.1.3)
+        r'\[([A-f0-9:\.]+)\]$',
         re.IGNORECASE)
     domain_whitelist = ['localhost']
 
@@ -129,18 +141,30 @@ class EmailValidator(object):
         if not self.user_regex.match(user_part):
             raise ValidationError(self.message, code=self.code)
 
-        if (not domain_part in self.domain_whitelist and
-                not self.domain_regex.match(domain_part)):
+        if (domain_part not in self.domain_whitelist and
+                not self.validate_domain_part(domain_part)):
             # Try for possible IDN domain-part
             try:
                 domain_part = domain_part.encode('idna').decode('ascii')
-                if not self.domain_regex.match(domain_part):
-                    raise ValidationError(self.message, code=self.code)
-                else:
+                if self.validate_domain_part(domain_part):
                     return
             except UnicodeError:
                 pass
             raise ValidationError(self.message, code=self.code)
+
+    def validate_domain_part(self, domain_part):
+        if self.domain_regex.match(domain_part):
+            return True
+
+        literal_match = self.literal_regex.match(domain_part)
+        if literal_match:
+            ip_address = literal_match.group(1)
+            try:
+                validate_ipv46_address(ip_address)
+                return True
+            except ValidationError:
+                pass
+        return False
 
     def __eq__(self, other):
         return isinstance(other, EmailValidator) and (self.domain_whitelist == other.domain_whitelist) and (self.message == other.message) and (self.code == other.code)

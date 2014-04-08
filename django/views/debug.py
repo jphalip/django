@@ -14,10 +14,10 @@ from django.template.defaultfilters import force_escape, pprint
 from django.utils.datastructures import MultiValueDict
 from django.utils.html import escape
 from django.utils.encoding import force_bytes, smart_text
-from django.utils.module_loading import import_by_path
+from django.utils.module_loading import import_string
 from django.utils import six
 
-HIDDEN_SETTINGS = re.compile('API|TOKEN|KEY|SECRET|PASS|PROFANITIES_LIST|SIGNATURE')
+HIDDEN_SETTINGS = re.compile('API|TOKEN|KEY|SECRET|PASS|SIGNATURE')
 
 CLEANSED_SUBSTITUTE = '********************'
 
@@ -85,7 +85,7 @@ def get_exception_reporter_filter(request):
     global default_exception_reporter_filter
     if default_exception_reporter_filter is None:
         # Load the default filter for the first time and cache it.
-        default_exception_reporter_filter = import_by_path(
+        default_exception_reporter_filter = import_string(
             settings.DEFAULT_EXCEPTION_REPORTER_FILTER)()
     if request:
         return getattr(request, 'exception_reporter_filter', default_exception_reporter_filter)
@@ -475,6 +475,11 @@ class ExceptionReporter(object):
 def technical_404_response(request, exception):
     "Create a technical 404 error response. The exception should be the Http404."
     try:
+        error_url = exception.args[0]['path']
+    except (IndexError, TypeError, KeyError):
+        error_url = request.path_info[1:]  # Trim leading slash
+
+    try:
         tried = exception.args[0]['tried']
     except (IndexError, TypeError, KeyError):
         tried = []
@@ -494,7 +499,7 @@ def technical_404_response(request, exception):
     c = Context({
         'urlconf': urlconf,
         'root_urlconf': settings.ROOT_URLCONF,
-        'request_path': request.path_info[1:],  # Trim leading slash
+        'request_path': error_url,
         'urlpatterns': tried,
         'reason': force_bytes(exception, errors='replace'),
         'request': request,
@@ -979,7 +984,7 @@ Exception Value: {{ exception_value|force_escape }}
 </html>
 """
 
-TECHNICAL_500_TEXT_TEMPLATE = """{% load firstof from future %}{% firstof exception_type 'Report' %}{% if request %} at {{ request.path_info }}{% endif %}
+TECHNICAL_500_TEXT_TEMPLATE = """{% firstof exception_type 'Report' %}{% if request %} at {{ request.path_info }}{% endif %}
 {% firstof exception_value 'No exception message supplied' %}
 {% if request %}
 Request Method: {{ request.META.REQUEST_METHOD }}

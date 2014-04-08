@@ -11,15 +11,12 @@ from collections import OrderedDict
 import copy
 import warnings
 
-from django.utils.encoding import force_text
-from django.utils.tree import Node
-from django.utils import six
+from django.core.exceptions import FieldError
 from django.db import connections, DEFAULT_DB_ALIAS
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.aggregates import refs_aggregate
 from django.db.models.expressions import ExpressionNode
 from django.db.models.fields import FieldDoesNotExist
-from django.db.models.lookups import Transform
 from django.db.models.query_utils import Q
 from django.db.models.related import PathInfo
 from django.db.models.sql import aggregates as base_aggregates_module
@@ -29,7 +26,10 @@ from django.db.models.sql.datastructures import EmptyResultSet, Empty, MultiJoin
 from django.db.models.sql.expressions import SQLEvaluator
 from django.db.models.sql.where import (WhereNode, Constraint, EverythingNode,
     ExtraWhere, AND, OR, EmptyWhere)
-from django.core.exceptions import FieldError
+from django.utils import six
+from django.utils.deprecation import RemovedInDjango19Warning
+from django.utils.encoding import force_text
+from django.utils.tree import Node
 
 __all__ = ['Query', 'RawQuery']
 
@@ -130,7 +130,7 @@ class Query(object):
         # subqueries...)
         self.select = []
         # The related_select_cols is used for columns needed for
-        # select_related - this is populated in compile stage.
+        # select_related - this is populated in the compile stage.
         self.related_select_cols = []
         self.tables = []    # Aliases in the order they are created.
         self.where = where()
@@ -483,7 +483,7 @@ class Query(object):
         # Base table must be present in the query - this is the same
         # table on both sides.
         self.get_initial_alias()
-        joinpromoter = JoinPromoter(connector, 2)
+        joinpromoter = JoinPromoter(connector, 2, False)
         joinpromoter.add_votes(
             j for j in self.alias_map if self.alias_map[j].join_type == self.INNER)
         rhs_votes = set()
@@ -568,7 +568,7 @@ class Query(object):
         Converts the self.deferred_loading data structure to an alternate data
         structure, describing the field that *will* be loaded. This is used to
         compute the columns to select from the database and also by the
-        QuerySet class to work out which fields are being initialised on each
+        QuerySet class to work out which fields are being initialized on each
         model. Models that have all their fields included aren't mentioned in
         the result, only those that have field restrictions in place.
 
@@ -1043,7 +1043,7 @@ class Query(object):
         elif callable(value):
             warnings.warn(
                 "Passing callable arguments to queryset is deprecated.",
-                PendingDeprecationWarning, stacklevel=2)
+                RemovedInDjango19Warning, stacklevel=2)
             value = value()
         elif isinstance(value, ExpressionNode):
             # If value is a query expression, evaluate it
@@ -1088,24 +1088,21 @@ class Query(object):
         lookups = lookups[:]
         while lookups:
             lookup = lookups[0]
-            next = lhs.get_lookup(lookup)
+            if len(lookups) == 1:
+                final_lookup = lhs.get_lookup(lookup)
+                if final_lookup:
+                    return final_lookup(lhs, rhs)
+                # We didn't find a lookup, so we are going to try get_transform
+                # + get_lookup('exact').
+                lookups.append('exact')
+            next = lhs.get_transform(lookup)
             if next:
-                if len(lookups) == 1:
-                    # This was the last lookup, so return value lookup.
-                    if issubclass(next, Transform):
-                        lookups.append('exact')
-                        lhs = next(lhs, lookups)
-                    else:
-                        return next(lhs, rhs)
-                else:
-                    lhs = next(lhs, lookups)
-            # A field's get_lookup() can return None to opt for backwards
-            # compatibility path.
-            elif len(lookups) > 2:
-                raise FieldError(
-                    "Unsupported lookup for field '%s'" % lhs.output_type.name)
+                lhs = next(lhs, lookups)
             else:
-                return None
+                raise FieldError(
+                    "Unsupported lookup '%s' for %s or join on the field not "
+                    "permitted." %
+                    (lookup, lhs.output_type.__class__.__name__))
             lookups = lookups[1:]
 
     def build_filter(self, filter_expr, branch_negated=False, current_negated=False,
@@ -1299,11 +1296,9 @@ class Query(object):
         connector = q_object.connector
         current_negated = current_negated ^ q_object.negated
         branch_negated = branch_negated or q_object.negated
-        # Note that if the connector happens to match what we have already in
-        # the tree, the add will be a no-op.
         target_clause = self.where_class(connector=connector,
                                          negated=q_object.negated)
-        joinpromoter = JoinPromoter(q_object.connector, len(q_object.children))
+        joinpromoter = JoinPromoter(q_object.connector, len(q_object.children), current_negated)
         for child in q_object.children:
             if isinstance(child, Node):
                 child_clause, needed_inner = self._add_q(
@@ -1769,7 +1764,7 @@ class Query(object):
         """
         # Fields on related models are stored in the literal double-underscore
         # format, so that we can use a set datastructure. We do the foo__bar
-        # splitting and handling when computing the SQL colum names (as part of
+        # splitting and handling when computing the SQL column names (as part of
         # get_columns()).
         existing, defer = self.deferred_loading
         if defer:
@@ -2013,8 +2008,16 @@ class JoinPromoter(object):
     conditions.
     """
 
-    def __init__(self, connector, num_children):
+    def __init__(self, connector, num_children, negated):
         self.connector = connector
+        self.negated = negated
+        if self.negated:
+            if connector == AND:
+                self.effective_connector = OR
+            else:
+                self.effective_connector = AND
+        else:
+            self.effective_connector = self.connector
         self.num_children = num_children
         # Maps of table alias to how many times it is seen as required for
         # inner and/or outer joins.
@@ -2038,6 +2041,8 @@ class JoinPromoter(object):
         """
         to_promote = set()
         to_demote = set()
+        # The effective_connector is used so that NOT (a AND b) is treated
+        # similarly to (a OR b) for join promotion.
         for table, votes in self.inner_votes.items():
             # We must use outer joins in OR case when the join isn't contained
             # in all of the joins. Otherwise the INNER JOIN itself could remove
@@ -2049,7 +2054,7 @@ class JoinPromoter(object):
             # to rel_a would remove a valid match from the query. So, we need
             # to promote any existing INNER to LOUTER (it is possible this
             # promotion in turn will be demoted later on).
-            if self.connector == 'OR' and votes < self.num_children:
+            if self.effective_connector == 'OR' and votes < self.num_children:
                 to_promote.add(table)
             # If connector is AND and there is a filter that can match only
             # when there is a joinable row, then use INNER. For example, in
@@ -2061,8 +2066,8 @@ class JoinPromoter(object):
             #     (rel_a__col__icontains=Alex | rel_a__col__icontains=Russell)
             # then if rel_a doesn't produce any rows, the whole condition
             # can't match. Hence we can safely use INNER join.
-            if self.connector == 'AND' or (self.connector == 'OR' and
-                                           votes == self.num_children):
+            if self.effective_connector == 'AND' or (
+                    self.effective_connector == 'OR' and votes == self.num_children):
                 to_demote.add(table)
             # Finally, what happens in cases where we have:
             #    (rel_a__col=1|rel_b__col=2) & rel_a__col__gte=0

@@ -25,6 +25,7 @@ from django.forms.widgets import (
 from django.utils import formats
 from django.utils.encoding import smart_text, force_str, force_text
 from django.utils.ipv6 import clean_ipv6_address
+from django.utils.deprecation import RemovedInDjango19Warning
 from django.utils import six
 from django.utils.six.moves.urllib.parse import urlsplit, urlunsplit
 from django.utils.translation import ugettext_lazy as _, ungettext_lazy
@@ -170,6 +171,17 @@ class Field(object):
         """
         return {}
 
+    def get_limit_choices_to(self):
+        """
+        Returns ``limit_choices_to`` for this form field.
+
+        If it is a callable, it will be invoked and the result will be
+        returned.
+        """
+        if callable(self.limit_choices_to):
+            return self.limit_choices_to()
+        return self.limit_choices_to
+
     def _has_changed(self, initial, data):
         """
         Return True if data differs from initial.
@@ -180,6 +192,8 @@ class Field(object):
         initial_value = initial if initial is not None else ''
         try:
             data = self.to_python(data)
+            if hasattr(self, '_coerce'):
+                data = self._coerce(data)
         except ValidationError:
             return True
         data_value = data if data is not None else ''
@@ -210,20 +224,23 @@ class CharField(Field):
 
     def widget_attrs(self, widget):
         attrs = super(CharField, self).widget_attrs(widget)
-        if self.max_length is not None and isinstance(widget, TextInput):
+        if self.max_length is not None:
             # The HTML attribute is maxlength, not max_length.
             attrs.update({'maxlength': str(self.max_length)})
         return attrs
 
 
 class IntegerField(Field):
+    widget = NumberInput
     default_error_messages = {
         'invalid': _('Enter a whole number.'),
     }
 
     def __init__(self, max_value=None, min_value=None, *args, **kwargs):
         self.max_value, self.min_value = max_value, min_value
-        kwargs.setdefault('widget', NumberInput if not kwargs.get('localize') else self.widget)
+        if kwargs.get('localize') and self.widget == NumberInput:
+            # Localized number input is not well supported on most browsers
+            kwargs.setdefault('widget', super(IntegerField, self).widget)
         super(IntegerField, self).__init__(*args, **kwargs)
 
         if max_value is not None:
@@ -489,7 +506,7 @@ class DateTimeField(BaseTemporalField):
             warnings.warn(
                 'Using SplitDateTimeWidget with DateTimeField is deprecated. '
                 'Use SplitDateTimeField instead.',
-                PendingDeprecationWarning, stacklevel=2)
+                RemovedInDjango19Warning, stacklevel=2)
             if len(value) != 2:
                 raise ValidationError(self.error_messages['invalid'], code='invalid')
             if value[0] in self.empty_values and value[1] in self.empty_values:
@@ -624,7 +641,7 @@ class ImageField(FileField):
         if f is None:
             return None
 
-        from django.utils.image import Image
+        from PIL import Image
 
         # We need to get a file object for Pillow. We might have a path or we might
         # have to read the data into memory.
@@ -642,7 +659,7 @@ class ImageField(FileField):
             # verify() must be called immediately after the constructor.
             Image.open(file).verify()
         except Exception:
-            # Pillow (or PIL) doesn't recognize it as an image.
+            # Pillow doesn't recognize it as an image.
             six.reraise(ValidationError, ValidationError(
                 self.error_messages['invalid_image'],
                 code='invalid_image',
@@ -687,9 +704,6 @@ class URLField(CharField):
                 # Rebuild the url_fields list, since the domain segment may now
                 # contain the path too.
                 url_fields = split_url(urlunsplit(url_fields))
-            if not url_fields[2]:
-                # the path portion may need to be added before query params
-                url_fields[2] = '/'
             value = urlunsplit(url_fields)
         return value
 
@@ -1156,7 +1170,7 @@ class IPAddressField(CharField):
 
     def __init__(self, *args, **kwargs):
         warnings.warn("IPAddressField has been deprecated. Use GenericIPAddressField instead.",
-                      PendingDeprecationWarning)
+                      RemovedInDjango19Warning)
         super(IPAddressField, self).__init__(*args, **kwargs)
 
     def to_python(self, value):

@@ -63,6 +63,7 @@ LANGUAGES = (
     ('de', gettext_noop('German')),
     ('el', gettext_noop('Greek')),
     ('en', gettext_noop('English')),
+    ('en-au', gettext_noop('Australian English')),
     ('en-gb', gettext_noop('British English')),
     ('eo', gettext_noop('Esperanto')),
     ('es', gettext_noop('Spanish')),
@@ -139,7 +140,13 @@ LANGUAGES_BIDI = ("he", "ar", "fa", "ur")
 # to load the internationalization machinery.
 USE_I18N = True
 LOCALE_PATHS = ()
+
+# Settings for language cookie
 LANGUAGE_COOKIE_NAME = 'django_language'
+LANGUAGE_COOKIE_AGE = None
+LANGUAGE_COOKIE_DOMAIN = None
+LANGUAGE_COOKIE_PATH = '/'
+
 
 # If you set this to True, Django will format dates, numbers and calendars
 # according to user current locale.
@@ -160,9 +167,6 @@ FILE_CHARSET = 'utf-8'
 
 # Email address that error messages come from.
 SERVER_EMAIL = 'root@localhost'
-
-# Whether to send broken-link emails. Deprecated, must be removed in 1.8.
-SEND_BROKEN_LINK_EMAILS = False
 
 # Database connection info. If left empty, will default to the dummy backend.
 DATABASES = {}
@@ -416,10 +420,6 @@ NUMBER_GROUPING = 0
 # Thousand separator symbol
 THOUSAND_SEPARATOR = ','
 
-# Do you want to manage transactions manually?
-# Hint: you really don't!
-TRANSACTIONS_MANAGED = False
-
 # The tablespaces to use for each model when not specified otherwise.
 DEFAULT_TABLESPACE = ''
 DEFAULT_INDEX_TABLESPACE = ''
@@ -493,16 +493,6 @@ CACHE_MIDDLEWARE_KEY_PREFIX = ''
 CACHE_MIDDLEWARE_SECONDS = 600
 CACHE_MIDDLEWARE_ALIAS = 'default'
 
-####################
-# COMMENTS         #
-####################
-
-COMMENTS_ALLOW_PROFANITIES = False
-
-# The profanities that will trigger a validation error in
-# CommentDetailsForm.clean_comment. All of these should be in lowercase.
-PROFANITIES_LIST = ()
-
 ##################
 # AUTHENTICATION #
 ##################
@@ -551,6 +541,7 @@ CSRF_FAILURE_VIEW = 'django.views.csrf.csrf_failure'
 
 # Settings for CSRF cookie.
 CSRF_COOKIE_NAME = 'csrftoken'
+CSRF_COOKIE_AGE = 60 * 60 * 24 * 7 * 52
 CSRF_COOKIE_DOMAIN = None
 CSRF_COOKIE_PATH = '/'
 CSRF_COOKIE_SECURE = False

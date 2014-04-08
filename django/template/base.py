@@ -69,7 +69,7 @@ libraries = {}
 builtins = []
 
 # True if TEMPLATE_STRING_IF_INVALID contains a format string (%s). None means
-# uninitialised.
+# uninitialized.
 invalid_var_format_string = None
 
 
@@ -545,9 +545,6 @@ class FilterExpression(object):
         2
         >>> fe.var
         <Variable: 'variable'>
-
-    This class should never be instantiated outside of the
-    get_filters_from_token helper function.
     """
     def __init__(self, token, parser):
         self.token = token

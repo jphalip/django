@@ -14,6 +14,7 @@ from django.db.models.sql.where import WhereNode, EverythingNode, NothingNode
 from django.db.models.sql.datastructures import EmptyResultSet
 from django.test import TestCase, skipUnlessDBFeature
 from django.test.utils import str_prefix, CaptureQueriesContext
+from django.utils.deprecation import RemovedInDjango19Warning
 from django.utils import six
 
 from .models import (
@@ -27,7 +28,7 @@ from .models import (
     BaseA, FK1, Identifier, Program, Channel, Page, Paragraph, Chapter, Book,
     MyObject, Order, OrderItem, SharedConnection, Task, Staff, StaffUser,
     CategoryRelationship, Ticket21203Parent, Ticket21203Child, Person,
-    Company, Employment)
+    Company, Employment, CustomPk, CustomPkTag)
 
 
 class BaseQuerysetTest(TestCase):
@@ -942,7 +943,7 @@ class Queries1Tests(BaseQuerysetTest):
 
     def test_ticket_10790_2(self):
         # Querying across several tables should strip only the last outer join,
-        # while preserving the preceeding inner joins.
+        # while preserving the preceding inner joins.
         q = Tag.objects.filter(parent__parent__isnull=False)
 
         self.assertQuerysetEqual(
@@ -1149,7 +1150,7 @@ class Queries1Tests(BaseQuerysetTest):
                 ['<Tag: t1>', '<Tag: t2>', '<Tag: t3>', '<Tag: t4>', '<Tag: t5>']
             )
             self.assertEqual(len(w), 1)
-            self.assertTrue(issubclass(w[0].category, PendingDeprecationWarning))
+            self.assertTrue(issubclass(w[0].category, RemovedInDjango19Warning))
 
 
 class Queries2Tests(TestCase):
@@ -1274,6 +1275,16 @@ class Queries3Tests(BaseQuerysetTest):
             "'name' isn't a DateTimeField.",
             Item.objects.datetimes, 'name', 'month'
         )
+
+    def test_ticket22023(self):
+        # only() and defer() are not applicable for ValuesQuerySet
+        with self.assertRaisesMessage(NotImplementedError,
+                "ValuesQuerySet does not implement only()"):
+            Valid.objects.values().only()
+
+        with self.assertRaisesMessage(NotImplementedError,
+                "ValuesQuerySet does not implement defer()"):
+            Valid.objects.values().defer()
 
 
 class Queries4Tests(BaseQuerysetTest):
@@ -2256,7 +2267,7 @@ class ConditionalTests(BaseQuerysetTest):
         # for the related field).
         self.assertEqual(len(Tag.objects.order_by('parent')), 5)
 
-        # ... but you can still order in a non-recursive fashion amongst linked
+        # ... but you can still order in a non-recursive fashion among linked
         # fields (the previous test failed because the default ordering was
         # recursive).
         self.assertQuerysetEqual(
@@ -2799,6 +2810,85 @@ class NullJoinPromotionOrTest(TestCase):
         self.assertQuerysetEqual(
             qs.order_by('name'), [r2, r1], lambda x: x)
 
+    def test_ticket_21748(self):
+        i1 = Identifier.objects.create(name='i1')
+        i2 = Identifier.objects.create(name='i2')
+        i3 = Identifier.objects.create(name='i3')
+        Program.objects.create(identifier=i1)
+        Channel.objects.create(identifier=i1)
+        Program.objects.create(identifier=i2)
+        self.assertQuerysetEqual(
+            Identifier.objects.filter(program=None, channel=None),
+            [i3], lambda x: x)
+        self.assertQuerysetEqual(
+            Identifier.objects.exclude(program=None, channel=None).order_by('name'),
+            [i1, i2], lambda x: x)
+
+    def test_ticket_21748_double_negated_and(self):
+        i1 = Identifier.objects.create(name='i1')
+        i2 = Identifier.objects.create(name='i2')
+        Identifier.objects.create(name='i3')
+        p1 = Program.objects.create(identifier=i1)
+        c1 = Channel.objects.create(identifier=i1)
+        Program.objects.create(identifier=i2)
+        # Check the ~~Q() (or equivalently .exclude(~Q)) works like Q() for
+        # join promotion.
+        qs1_doubleneg = Identifier.objects.exclude(~Q(program__id=p1.id, channel__id=c1.id)).order_by('pk')
+        qs1_filter = Identifier.objects.filter(program__id=p1.id, channel__id=c1.id).order_by('pk')
+        self.assertQuerysetEqual(qs1_doubleneg, qs1_filter, lambda x: x)
+        self.assertEqual(str(qs1_filter.query).count('JOIN'),
+                         str(qs1_doubleneg.query).count('JOIN'))
+        self.assertEqual(2, str(qs1_doubleneg.query).count('INNER JOIN'))
+        self.assertEqual(str(qs1_filter.query).count('INNER JOIN'),
+                         str(qs1_doubleneg.query).count('INNER JOIN'))
+
+    def test_ticket_21748_double_negated_or(self):
+        i1 = Identifier.objects.create(name='i1')
+        i2 = Identifier.objects.create(name='i2')
+        Identifier.objects.create(name='i3')
+        p1 = Program.objects.create(identifier=i1)
+        c1 = Channel.objects.create(identifier=i1)
+        p2 = Program.objects.create(identifier=i2)
+        # Test OR + doubleneq. The expected result is that channel is LOUTER
+        # joined, program INNER joined
+        qs1_filter = Identifier.objects.filter(
+            Q(program__id=p2.id, channel__id=c1.id)
+            | Q(program__id=p1.id)
+        ).order_by('pk')
+        qs1_doubleneg = Identifier.objects.exclude(
+            ~Q(Q(program__id=p2.id, channel__id=c1.id)
+            | Q(program__id=p1.id))
+        ).order_by('pk')
+        self.assertQuerysetEqual(qs1_doubleneg, qs1_filter, lambda x: x)
+        self.assertEqual(str(qs1_filter.query).count('JOIN'),
+                         str(qs1_doubleneg.query).count('JOIN'))
+        self.assertEqual(1, str(qs1_doubleneg.query).count('INNER JOIN'))
+        self.assertEqual(str(qs1_filter.query).count('INNER JOIN'),
+                         str(qs1_doubleneg.query).count('INNER JOIN'))
+
+    def test_ticket_21748_complex_filter(self):
+        i1 = Identifier.objects.create(name='i1')
+        i2 = Identifier.objects.create(name='i2')
+        Identifier.objects.create(name='i3')
+        p1 = Program.objects.create(identifier=i1)
+        c1 = Channel.objects.create(identifier=i1)
+        p2 = Program.objects.create(identifier=i2)
+        # Finally, a more complex case, one time in a way where each
+        # NOT is pushed to lowest level in the boolean tree, and
+        # another query where this isn't done.
+        qs1 = Identifier.objects.filter(
+            ~Q(~Q(program__id=p2.id, channel__id=c1.id)
+            & Q(program__id=p1.id))).order_by('pk')
+        qs2 = Identifier.objects.filter(
+            Q(Q(program__id=p2.id, channel__id=c1.id)
+            | ~Q(program__id=p1.id))).order_by('pk')
+        self.assertQuerysetEqual(qs1, qs2, lambda x: x)
+        self.assertEqual(str(qs1.query).count('JOIN'),
+                         str(qs2.query).count('JOIN'))
+        self.assertEqual(0, str(qs1.query).count('INNER JOIN'))
+        self.assertEqual(str(qs1.query).count('INNER JOIN'),
+                         str(qs2.query).count('INNER JOIN'))
+
 
 class ReverseJoinTrimmingTest(TestCase):
     def test_reverse_trimming(self):
@@ -3243,3 +3333,16 @@ class ForeignKeyToBaseExcludeTests(TestCase):
             SpecialCategory.objects.filter(categoryitem__id=c1.pk),
             [sc1], lambda x: x
         )
+
+
+class ReverseM2MCustomPkTests(TestCase):
+    def test_ticket_21879(self):
+        cpt1 = CustomPkTag.objects.create(id='cpt1', tag='cpt1')
+        cp1 = CustomPk.objects.create(name='cp1', extra='extra')
+        cp1.custompktag_set.add(cpt1)
+        self.assertQuerysetEqual(
+            CustomPk.objects.filter(custompktag=cpt1), [cp1],
+            lambda x: x)
+        self.assertQuerysetEqual(
+            CustomPkTag.objects.filter(custom_pk=cp1), [cpt1],
+            lambda x: x)

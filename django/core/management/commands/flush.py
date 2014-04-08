@@ -28,8 +28,8 @@ class Command(NoArgsCommand):
            're-executed, and the initial_data fixture will be re-installed.')
 
     def handle_noargs(self, **options):
-        db = options.get('database')
-        connection = connections[db]
+        database = options.get('database')
+        connection = connections[database]
         verbosity = int(options.get('verbosity'))
         interactive = options.get('interactive')
         # The following are stealth options used by Django's internals.
@@ -63,10 +63,11 @@ Are you sure you want to do this?
 
         if confirm == 'yes':
             try:
-                with transaction.commit_on_success_unless_managed():
-                    cursor = connection.cursor()
-                    for sql in sql_list:
-                        cursor.execute(sql)
+                with transaction.atomic(using=database,
+                                        savepoint=connection.features.can_rollback_ddl):
+                    with connection.cursor() as cursor:
+                        for sql in sql_list:
+                            cursor.execute(sql)
             except Exception as e:
                 new_msg = (
                     "Database %s couldn't be flushed. Possible reasons:\n"
@@ -78,7 +79,7 @@ Are you sure you want to do this?
                 six.reraise(CommandError, CommandError(new_msg), sys.exc_info()[2])
 
             if not inhibit_post_migrate:
-                self.emit_post_migrate(verbosity, interactive, db)
+                self.emit_post_migrate(verbosity, interactive, database)
 
             # Reinstall the initial_data fixture.
             if options.get('load_initial_data'):

@@ -101,8 +101,8 @@ class BadExceptionMiddleware(TestMiddleware):
         raise TestException('Test Exception Exception')
 
 
+@override_settings(ROOT_URLCONF='middleware_exceptions.urls')
 class BaseMiddlewareExceptionTest(TestCase):
-    urls = 'middleware_exceptions.urls'
 
     def setUp(self):
         self.exceptions = []
@@ -382,7 +382,7 @@ class MiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object.",
+            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead.",
         ],
             ValueError())
 
@@ -399,7 +399,7 @@ class MiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object."
+            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead."
         ],
             ValueError())
 
@@ -693,7 +693,7 @@ class BadMiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(bad_middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object.",
+            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead.",
             'Test Response Exception'
         ])
 
@@ -710,7 +710,7 @@ class BadMiddlewareTests(BaseMiddlewareExceptionTest):
         self._add_middleware(bad_middleware)
         self._add_middleware(pre_middleware)
         self.assert_exceptions_handled('/middleware_exceptions/null_view/', [
-            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object."
+            "The view middleware_exceptions.views.null_view didn't return an HttpResponse object. It returned None instead."
         ],
             ValueError())
 
@@ -779,8 +779,8 @@ class BadMiddlewareTests(BaseMiddlewareExceptionTest):
 _missing = object()
 
 
+@override_settings(ROOT_URLCONF='middleware_exceptions.urls')
 class RootUrlconfTests(TestCase):
-    urls = 'middleware_exceptions.urls'
 
     @override_settings(ROOT_URLCONF=None)
     def test_missing_root_urlconf(self):

@@ -153,7 +153,7 @@ class BaseFormSet(object):
         if self.is_bound:
             defaults['data'] = self.data
             defaults['files'] = self.files
-        if self.initial and not 'initial' in kwargs:
+        if self.initial and 'initial' not in kwargs:
             try:
                 defaults['initial'] = self.initial[i]
             except IndexError:
@@ -308,7 +308,7 @@ class BaseFormSet(object):
                     # should not cause the entire formset to be invalid.
                     continue
             forms_valid &= form.is_valid()
-        return forms_valid and not bool(self.non_form_errors())
+        return forms_valid and not self.non_form_errors()
 
     def full_clean(self):
         """
@@ -347,7 +347,7 @@ class BaseFormSet(object):
         """
         Hook for doing any extra formset-wide cleaning after Form.clean() has
         been called on every form. Any ValidationError raised by this method
-        will not be associated with a particular form; it will be accesible
+        will not be associated with a particular form; it will be accessible
         via formset.non_form_errors()
         """
         pass

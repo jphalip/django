@@ -48,7 +48,6 @@ def utc_tzinfo_factory(offset):
 class DatabaseFeatures(BaseDatabaseFeatures):
     needs_datetime_string_cast = False
     can_return_id_from_insert = True
-    requires_rollback_on_dirty_transaction = True
     has_real_datatype = True
     can_defer_constraint_checks = True
     has_select_for_update = True
@@ -149,8 +148,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
             if conn_tz != tz:
                 cursor = self.connection.cursor()
-                cursor.execute(self.ops.set_time_zone_sql(), [tz])
-                cursor.close()
+                try:
+                    cursor.execute(self.ops.set_time_zone_sql(), [tz])
+                finally:
+                    cursor.close()
                 # Commit after setting the time zone (see #17062)
                 if not self.get_autocommit():
                     self.connection.commit()
@@ -179,8 +180,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                 exc_info=sys.exc_info()
             )
             raise
-        finally:
-            self.set_clean()
 
     def _set_isolation_level(self, isolation_level):
         assert isolation_level in range(1, 5)     # Use set_autocommit for level = 0

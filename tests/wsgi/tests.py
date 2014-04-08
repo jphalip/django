@@ -12,8 +12,8 @@ from django.test.client import RequestFactory
 from django.utils import six
 
 
+@override_settings(ROOT_URLCONF="wsgi.urls")
 class WSGITest(TestCase):
-    urls = "wsgi.urls"
 
     def setUp(self):
         request_started.disconnect(close_old_connections)
@@ -101,6 +101,6 @@ class GetInternalWSGIApplicationTest(unittest.TestCase):
     def test_bad_name(self):
         with six.assertRaisesRegex(self,
                 ImproperlyConfigured,
-                r"^WSGI application 'wsgi.wsgi.noexist' could not be loaded; Module.*"):
+                r"^WSGI application 'wsgi.wsgi.noexist' could not be loaded; Error importing.*"):
 
             get_internal_wsgi_application()

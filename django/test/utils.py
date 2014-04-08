@@ -2,7 +2,6 @@ from contextlib import contextmanager
 import logging
 import re
 import sys
-from threading import local
 import time
 from unittest import skipUnless
 import warnings
@@ -18,8 +17,9 @@ from django.http import request
 from django.template import Template, loader, TemplateDoesNotExist
 from django.template.loaders import cached
 from django.test.signals import template_rendered, setting_changed
-from django.utils.encoding import force_str
 from django.utils import six
+from django.utils.deprecation import RemovedInDjango19Warning, RemovedInDjango20Warning
+from django.utils.encoding import force_str
 from django.utils.translation import deactivate
 
 
@@ -260,7 +260,7 @@ class modify_settings(override_settings):
     """
     def __init__(self, *args, **kwargs):
         if args:
-            # Hack used when instaciating from SimpleTestCase._pre_setup.
+            # Hack used when instantiating from SimpleTestCase._pre_setup.
             assert not kwargs
             self.operations = args[0]
         else:
@@ -458,8 +458,7 @@ class CaptureQueriesContext(object):
 
 
 class IgnoreDeprecationWarningsMixin(object):
-
-    warning_classes = [DeprecationWarning]
+    warning_classes = [RemovedInDjango19Warning]
 
     def setUp(self):
         super(IgnoreDeprecationWarningsMixin, self).setUp()
@@ -474,13 +473,11 @@ class IgnoreDeprecationWarningsMixin(object):
 
 
 class IgnorePendingDeprecationWarningsMixin(IgnoreDeprecationWarningsMixin):
-
-        warning_classes = [PendingDeprecationWarning]
+        warning_classes = [RemovedInDjango20Warning]
 
 
 class IgnoreAllDeprecationWarningsMixin(IgnoreDeprecationWarningsMixin):
-
-        warning_classes = [PendingDeprecationWarning, DeprecationWarning]
+        warning_classes = [RemovedInDjango20Warning, RemovedInDjango19Warning]
 
 
 @contextmanager
@@ -502,22 +499,6 @@ def patch_logger(logger_name, log_level):
         setattr(logger, log_level, orig)
 
 
-class TransRealMixin(object):
-    """This is the only way to reset the translation machinery. Otherwise
-    the test suite occasionally fails because of global state pollution
-    between tests."""
-    def flush_caches(self):
-        from django.utils.translation import trans_real
-        trans_real._translations = {}
-        trans_real._active = local()
-        trans_real._default = None
-        trans_real.check_for_language.cache_clear()
-
-    def tearDown(self):
-        self.flush_caches()
-        super(TransRealMixin, self).tearDown()
-
-
 # On OSes that don't provide tzset (Windows), we can't set the timezone
 # in which the program runs. As a consequence, we must skip tests that
 # don't enforce a specific timezone (with timezone.override or equivalent),
@@ -526,3 +507,14 @@ class TransRealMixin(object):
 requires_tz_support = skipUnless(TZ_SUPPORT,
         "This test relies on the ability to run a program in an arbitrary "
         "time zone, but your operating system isn't able to do that.")
+
+
+@contextmanager
+def extend_sys_path(*paths):
+    """Context manager to temporarily add paths to sys.path."""
+    _orig_sys_path = sys.path[:]
+    sys.path.extend(paths)
+    try:
+        yield
+    finally:
+        sys.path = _orig_sys_path

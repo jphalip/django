@@ -12,7 +12,7 @@ from django.conf import settings
 from django.utils import formats
 from django.utils.dateformat import format, time_format
 from django.utils.encoding import force_text, iri_to_uri
-from django.utils.html import (conditional_escape, escapejs, fix_ampersands,
+from django.utils.html import (conditional_escape, escapejs,
     escape, urlize as _urlize, linebreaks, strip_tags, avoid_wrapping,
     remove_tags)
 from django.utils.http import urlquote
@@ -81,12 +81,6 @@ def escapejs_filter(value):
     """Hex encodes characters for use in JavaScript strings."""
     return escapejs(value)
 
-
-@register.filter("fix_ampersands", is_safe=True)
-@stringfilter
-def fix_ampersands_filter(value):
-    """Replaces ampersands with ``&amp;`` entities."""
-    return fix_ampersands(value)
 
 # Values for testing floatformat input against infinity and NaN representations,
 # which differ across platforms and Python versions.  Some (i.e. old Windows
@@ -277,6 +271,23 @@ def truncatechars(value, arg):
     except ValueError:  # Invalid literal for int().
         return value  # Fail silently.
     return Truncator(value).chars(length)
+
+
+@register.filter(is_safe=True)
+@stringfilter
+def truncatechars_html(value, arg):
+    """
+    Truncates HTML after a certain number of chars.
+
+    Argument: Number of chars to truncate after.
+
+    Newlines in the HTML are preserved.
+    """
+    try:
+        length = int(arg)
+    except ValueError:  # invalid literal for int()
+        return value  # Fail silently.
+    return Truncator(value).chars(length, html=True)
 
 
 @register.filter(is_safe=True)
@@ -561,7 +572,7 @@ def last(value):
         return ''
 
 
-@register.filter(is_safe=True)
+@register.filter(is_safe=False)
 def length(value):
     """Returns the length of the value - useful for lists."""
     try:
@@ -915,7 +926,7 @@ def pluralize(value, arg='s'):
     * If value is 1, cand{{ value|pluralize:"y,ies" }} displays "1 candy".
     * If value is 2, cand{{ value|pluralize:"y,ies" }} displays "2 candies".
     """
-    if not ',' in arg:
+    if ',' not in arg:
         arg = ',' + arg
     bits = arg.split(',')
     if len(bits) > 2:

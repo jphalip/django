@@ -2,11 +2,15 @@ from __future__ import unicode_literals
 
 import json
 import sys
-import warnings
+
+try:
+    from collections import UserList
+except ImportError:  # Python 2
+    from UserList import UserList
 
 from django.conf import settings
-from django.utils.html import format_html, format_html_join
 from django.utils.encoding import force_text, python_2_unicode_compatible
+from django.utils.html import format_html, format_html_join, escape
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 from django.utils import six
@@ -14,11 +18,6 @@ from django.utils import six
 # Import ValidationError so that it can be imported from this
 # module to maintain backwards compatibility.
 from django.core.exceptions import ValidationError
-
-try:
-    from collections import UserList
-except ImportError:  # Python 2
-    from UserList import UserList
 
 
 def flatatt(attrs):
@@ -30,19 +29,18 @@ def flatatt(attrs):
 
     The result is passed through 'mark_safe'.
     """
-    for attr_name, value in attrs.items():
-        if type(value) is bool:
-            warnings.warn(
-                "In Django 1.8, widget attribute %(attr_name)s=%(bool_value)s "
-                "will %(action)s. To preserve current behavior, use the "
-                "string '%(bool_value)s' instead of the boolean value." % {
-                    'attr_name': attr_name,
-                    'action': "be rendered as '%s'" % attr_name if value else "not be rendered",
-                    'bool_value': value,
-                },
-                DeprecationWarning
-            )
-    return format_html_join('', ' {0}="{1}"', sorted(attrs.items()))
+    boolean_attrs = []
+    for attr, value in list(attrs.items()):
+        if value is True:
+            boolean_attrs.append((attr,))
+            del attrs[attr]
+        elif value is False:
+            del attrs[attr]
+
+    return (
+        format_html_join('', ' {0}="{1}"', sorted(attrs.items())) +
+        format_html_join('', ' {0}', sorted(boolean_attrs))
+    )
 
 
 @python_2_unicode_compatible
@@ -55,9 +53,8 @@ class ErrorDict(dict):
     def as_data(self):
         return {f: e.as_data() for f, e in self.items()}
 
-    def as_json(self):
-        errors = {f: json.loads(e.as_json()) for f, e in self.items()}
-        return json.dumps(errors)
+    def as_json(self, escape_html=False):
+        return json.dumps({f: e.get_json_data(escape_html) for f, e in self.items()})
 
     def as_ul(self):
         if not self:
@@ -84,16 +81,20 @@ class ErrorList(UserList, list):
     A collection of errors that knows how to display itself in various formats.
     """
     def as_data(self):
-        return self.data
+        return ValidationError(self.data).error_list
 
-    def as_json(self):
+    def get_json_data(self, escape_html=False):
         errors = []
-        for error in ValidationError(self.data).error_list:
+        for error in self.as_data():
+            message = list(error)[0]
             errors.append({
-                'message': list(error)[0],
+                'message': escape(message) if escape_html else message,
                 'code': error.code or '',
             })
-        return json.dumps(errors)
+        return errors
+
+    def as_json(self, escape_html=False):
+        return json.dumps(self.get_json_data(escape_html))
 
     def as_ul(self):
         if not self.data:

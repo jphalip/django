@@ -38,12 +38,12 @@ else:
     raise ImportError('Unsupported OS "%s"' % os.name)
 
 # Using the ctypes `find_library` utility to find the path to the GEOS
-# shared library.  This is better than manually specifiying each library name
+# shared library.  This is better than manually specifying each library name
 # and extension (e.g., libgeos_c.[so|so.1|dylib].).
 if lib_names:
     for lib_name in lib_names:
         lib_path = find_library(lib_name)
-        if not lib_path is None:
+        if lib_path is not None:
             break
 
 # No GEOS library could be found.
@@ -121,7 +121,7 @@ def get_pointer_arr(n):
     return GeomArr()
 
 # Returns the string version of the GEOS library. Have to set the restype
-# explicitly to c_char_p to ensure compatibility accross 32 and 64-bit platforms.
+# explicitly to c_char_p to ensure compatibility across 32 and 64-bit platforms.
 geos_version = lgeos.GEOSversion
 geos_version.argtypes = None
 geos_version.restype = c_char_p

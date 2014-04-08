@@ -17,10 +17,6 @@ Overview
 The admin is enabled in the default project template used by
 :djadmin:`startproject`.
 
-.. versionchanged:: 1.6
-
-    In previous versions, the admin wasn't enabled by default.
-
 For reference, here are the requirements:
 
 1. Add ``'django.contrib.admin'`` to your :setting:`INSTALLED_APPS` setting.
@@ -419,8 +415,6 @@ subclass::
 
     .. admonition:: Note
 
-        .. versionchanged:: 1.6
-
         If you define the ``Meta.model`` attribute on a
         :class:`~django.forms.ModelForm`, you must also define the
         ``Meta.fields`` attribute (or the ``Meta.exclude`` attribute). However,
@@ -512,7 +506,7 @@ subclass::
         list_display = ('first_name', 'last_name')
 
     If you don't set ``list_display``, the admin site will display a single
-    column that displays the ``__unicode__()`` (``__str__()`` on Python 3)
+    column that displays the ``__str__()`` (``__unicode__()`` on Python 2)
     representation of each object.
 
     You have four possible values that can be used in ``list_display``:
@@ -563,7 +557,7 @@ subclass::
     A few special cases to note about ``list_display``:
 
     * If the field is a ``ForeignKey``, Django will display the
-      ``__unicode__()`` (``__str__()`` on Python 3) of the related object.
+      ``__str__()`` (``__unicode__()`` on Python 2) of the related object.
 
     * ``ManyToManyField`` fields aren't supported, because that would
       entail executing a separate SQL statement for each row in the table.
@@ -626,11 +620,11 @@ subclass::
               list_display = ('name', 'born_in_fifties')
 
 
-    * The ``__str__()`` and ``__unicode__()`` methods are just as valid in
-      ``list_display`` as any other model method, so it's perfectly OK to
-      do this::
+    * The ``__str__()`` (``__unicode__()`` on Python 2) method is just
+      as valid in ``list_display`` as any other model method, so it's
+      perfectly OK to do this::
 
-          list_display = ('__unicode__', 'some_other_field')
+          list_display = ('__str__', 'some_other_field')
 
     * Usually, elements of ``list_display`` that aren't actual database
       fields can't be used in sorting (because Django does all the sorting
@@ -664,6 +658,14 @@ subclass::
       The above will tell Django to order by the ``first_name`` field when
       trying to sort by ``colored_first_name`` in the admin.
 
+      .. versionadded:: 1.7
+
+      To indicate descending order with ``admin_model_field`` you can use a
+      hyphen prefix on the field name. Using the above example, this would
+      look like::
+
+          colored_first_name.admin_order_field = '-first_name'
+
     * Elements of ``list_display`` can also be properties. Please note however,
       that due to the way properties work in Python, setting
       ``short_description`` on a property is only possible when using the
@@ -685,11 +687,20 @@ subclass::
               list_display = ('full_name',)
 
 
-    * .. versionadded:: 1.6
-
-      The field names in ``list_display`` will also appear as CSS classes in
+    * The field names in ``list_display`` will also appear as CSS classes in
       the HTML output, in the form of ``column-<field_name>`` on each ``<th>``
       element. This can be used to set column widths in a CSS file for example.
+
+    * Django will try to interpret every element of ``list_display`` in this
+      order:
+
+      * A field of the model.
+      * A callable.
+      * A string representing a ``ModelAdmin`` attribute.
+      * A string representing a model attribute.
+
+      For example if you have ``first_name`` as a model field and
+      as a ``ModelAdmin`` attribute, the model field will be used.
 
 
 .. attribute:: ModelAdmin.list_display_links
@@ -899,8 +910,6 @@ subclass::
     the list of objects on the admin change list page. This can save you a
     bunch of database queries.
 
-    .. versionchanged:: 1.6
-
     The value should be either a boolean, a list or a tuple. Default is
     ``False``.
 
@@ -958,8 +967,6 @@ subclass::
     nor ``ManyToManyField`` fields.
 
 .. attribute:: ModelAdmin.preserve_filters
-
-    .. versionadded:: 1.6
 
     The admin now preserves filters on the list view after creating, editing
     or deleting an object. You can restore the previous behavior of clearing
@@ -1267,8 +1274,6 @@ templates used by the :class:`ModelAdmin` views:
 
 .. method:: ModelAdmin.get_search_results(request, queryset, search_term)
 
-    .. versionadded:: 1.6
-
     The ``get_search_results`` method modifies the list of objects displayed in
     to those that match the provided search term. It accepts the request, a
     queryset that applies the current filters, and the user-provided search term.
@@ -1374,7 +1379,12 @@ templates used by the :class:`ModelAdmin` views:
     ``obj`` being edited (or ``None`` on an add form) and is expected to return
     a ``list`` or ``tuple`` of :class:`~django.contrib.admin.InlineModelAdmin`
     objects, as described below in the :class:`~django.contrib.admin.InlineModelAdmin`
-    section.
+    section. For example, the following would return inlines without the default
+    filtering based on add, change, and delete permissions::
+
+        class MyModelAdmin(admin.ModelAdmin):
+            def get_inline_instances(request, obj=None):
+                return [inline(self.model, self.admin_site) for inline in self.inlines]
 
 .. method:: ModelAdmin.get_urls()
 
@@ -1385,9 +1395,9 @@ templates used by the :class:`ModelAdmin` views:
         class MyModelAdmin(admin.ModelAdmin):
             def get_urls(self):
                 urls = super(MyModelAdmin, self).get_urls()
-                my_urls = patterns('',
-                    (r'^my_view/$', self.my_view)
-                )
+                my_urls = [
+                    url(r'^my_view/$', self.my_view),
+                ]
                 return my_urls + urls
 
             def my_view(self, request):
@@ -1422,9 +1432,9 @@ templates used by the :class:`ModelAdmin` views:
         class MyModelAdmin(admin.ModelAdmin):
             def get_urls(self):
                 urls = super(MyModelAdmin, self).get_urls()
-                my_urls = patterns('',
-                    (r'^my_view/$', self.admin_site.admin_view(self.my_view))
-                )
+                my_urls = [
+                    url(r'^my_view/$', self.admin_site.admin_view(self.my_view))
+                ]
                 return my_urls + urls
 
     Notice the wrapped view in the fifth line above::
@@ -1574,8 +1584,6 @@ templates used by the :class:`ModelAdmin` views:
 
     .. admonition:: Note
 
-        .. versionchanged:: 1.6
-
         If you define the ``Meta.model`` attribute on a
         :class:`~django.forms.ModelForm`, you must also define the
         ``Meta.fields`` attribute (or the ``Meta.exclude`` attribute). However,
@@ -1635,10 +1643,6 @@ templates used by the :class:`ModelAdmin` views:
                     return qs
                 return qs.filter(author=request.user)
 
-    .. versionchanged:: 1.6
-
-        The ``get_queryset`` method was previously named ``queryset``.
-
 .. method:: ModelAdmin.message_user(request, message, level=messages.INFO, extra_tags='', fail_silently=False)
 
     Sends a message to the user using the :mod:`django.contrib.messages`
@@ -1674,7 +1678,7 @@ templates used by the :class:`ModelAdmin` views:
     ``response_change`` is called after the admin form is submitted and
     just after the object and all the related instances have
     been saved. You can override it to change the default
-    behavior after the object has been changedn.
+    behavior after the object has been changed.
 
 .. method:: ModelAdmin.response_delete(request, obj_display)
 
@@ -1689,6 +1693,21 @@ templates used by the :class:`ModelAdmin` views:
 
     ``obj_display`` is a string with the name of the deleted
     object.
+
+.. method:: ModelAdmin.get_changeform_initial_data(request)
+
+    .. versionadded:: 1.7
+
+    A hook for the initial data on admin change forms. By default, fields are
+    given initial values from ``GET`` parameters. For instance,
+    ``?name=initial_value`` will set the ``name`` field's initial value to be
+    ``initial_value``.
+
+    This method should return a dictionary in the form
+    ``{'fieldname': 'fieldval'}``::
+
+        def get_changeform_initial_data(self, request):
+            return {'name': 'custom_initial_value'}
 
 Other methods
 ~~~~~~~~~~~~~
@@ -1778,13 +1797,9 @@ To avoid conflicts with user-supplied scripts or libraries, Django's jQuery
 in your own admin JavaScript without including a second copy, you can use the
 ``django.jQuery`` object on changelist and add/edit views.
 
-.. versionchanged:: 1.6
-
-    The embedded jQuery has been upgraded from 1.4.2 to 1.9.1.
-
 The :class:`ModelAdmin` class requires jQuery by default, so there is no need
 to add jQuery to your ``ModelAdmin``’s list of media resources unless you have
-a specifc need. For example, if you require the jQuery library to be in the
+a specific need. For example, if you require the jQuery library to be in the
 global namespace (for example when using third-party jQuery plugins) or if you
 need a newer version of jQuery, you will have to include your own copy.
 
@@ -1936,8 +1951,6 @@ The ``InlineModelAdmin`` class adds:
     The dynamic link will not appear if the number of currently displayed forms
     exceeds ``max_num``, or if the user does not have JavaScript enabled.
 
-    .. versionadded:: 1.6
-
     :meth:`InlineModelAdmin.get_extra` also allows you to customize the number
     of extra forms.
 
@@ -1948,8 +1961,6 @@ The ``InlineModelAdmin`` class adds:
     This controls the maximum number of forms to show in the inline. This
     doesn't directly correlate to the number of objects, but can if the value
     is small enough. See :ref:`model-formsets-max-num` for more information.
-
-    .. versionadded:: 1.6
 
     :meth:`InlineModelAdmin.get_max_num` also allows you to customize the
     maximum number of extra forms.
@@ -1992,11 +2003,9 @@ The ``InlineModelAdmin`` class adds:
 
     Returns a :class:`~django.forms.models.BaseInlineFormSet` class for use in
     admin add/change views. See the example for
-    :class:`ModelAdmin.get_formsets`.
+    :class:`ModelAdmin.get_formsets_with_inlines`.
 
 .. method:: InlineModelAdmin.get_extra(request, obj=None, **kwargs)
-
-    .. versionadded:: 1.6
 
     Returns the number of extra inline forms to use. By default, returns the
     :attr:`InlineModelAdmin.extra` attribute.
@@ -2015,8 +2024,6 @@ The ``InlineModelAdmin`` class adds:
                 return extra
 
 .. method:: InlineModelAdmin.get_max_num(request, obj=None, **kwargs)
-
-    .. versionadded:: 1.6
 
     Returns the maximum number of extra inline forms to use. By default,
     returns the :attr:`InlineModelAdmin.max_num` attribute.
@@ -2187,30 +2194,32 @@ It is possible to use an inline with generically related objects. Let's say
 you have the following models::
 
     from django.db import models
+    from django.contrib.contenttypes.fields import GenericForeignKey
 
     class Image(models.Model):
         image = models.ImageField(upload_to="images")
         content_type = models.ForeignKey(ContentType)
         object_id = models.PositiveIntegerField()
-        content_object = generic.GenericForeignKey("content_type", "object_id")
+        content_object = GenericForeignKey("content_type", "object_id")
 
     class Product(models.Model):
         name = models.CharField(max_length=100)
 
 If you want to allow editing and creating ``Image`` instance on the ``Product``
-add/change views you can use ``GenericTabularInline`` or
-``GenericStackedInline`` (both subclasses of ``GenericInlineModelAdmin``)
-provided by ``django.contrib.contenttypes.generic``, they implement tabular and
+add/change views you can use :class:`~django.contrib.contenttypes.admin.GenericTabularInline`
+or :class:`~django.contrib.contenttypes.admin.GenericStackedInline` (both
+subclasses of :class:`~django.contrib.contenttypes.admin.GenericInlineModelAdmin`)
+provided by :mod:`~django.contrib.contenttypes.admin`, they implement tabular and
 stacked visual layouts for the forms representing the inline objects
 respectively just like their non-generic counterparts and behave just like any
 other inline. In your ``admin.py`` for this example app::
 
     from django.contrib import admin
-    from django.contrib.contenttypes import generic
+    from django.contrib.contenttypes.admin import GenericTabularInline
 
     from myproject.myapp.models import Image, Product
 
-    class ImageInline(generic.GenericTabularInline):
+    class ImageInline(GenericTabularInline):
         model = Image
 
     class ProductAdmin(admin.ModelAdmin):
@@ -2238,7 +2247,12 @@ directory.
 
 In order to override one or more of them, first create an ``admin`` directory
 in your project's ``templates`` directory. This can be any of the directories
-you specified in :setting:`TEMPLATE_DIRS`.
+you specified in :setting:`TEMPLATE_DIRS`. If you have customized the
+:setting:`TEMPLATE_LOADERS` setting, be sure
+``'django.template.loaders.filesystem.Loader'`` appears before
+``'django.template.loaders.app_directories.Loader'`` so that your custom
+templates will be found by the template loading system before those that are
+included with :mod:`django.contrib.admin`.
 
 Within this ``admin`` directory, create sub-directories named after your app.
 Within these app subdirectories create sub-directories named after your models.
@@ -2420,23 +2434,23 @@ In this example, we register the default ``AdminSite`` instance
 ``django.contrib.admin.site`` at the URL ``/admin/`` ::
 
     # urls.py
-    from django.conf.urls import patterns, include
+    from django.conf.urls import include, url
     from django.contrib import admin
 
-    urlpatterns = patterns('',
-        (r'^admin/', include(admin.site.urls)),
-    )
+    urlpatterns = [
+        url(r'^admin/', include(admin.site.urls)),
+    ]
 
 In this example, we register the ``AdminSite`` instance
 ``myproject.admin.admin_site`` at the URL ``/myadmin/`` ::
 
     # urls.py
-    from django.conf.urls import patterns, include
+    from django.conf.urls import include, url
     from myproject.admin import admin_site
 
-    urlpatterns = patterns('',
-        (r'^myadmin/', include(admin_site.urls)),
-    )
+    urlpatterns = [
+        url(r'^myadmin/', include(admin_site.urls)),
+    ]
 
 Note that you may not want autodiscovery of ``admin`` modules when using your
 own ``AdminSite`` instance since you will likely be importing all the per-app
@@ -2458,13 +2472,13 @@ separate versions of the admin site -- using the ``AdminSite`` instances
 respectively::
 
     # urls.py
-    from django.conf.urls import patterns, include
+    from django.conf.urls import include, url
     from myproject.admin import basic_site, advanced_site
 
-    urlpatterns = patterns('',
-        (r'^basic-admin/', include(basic_site.urls)),
-        (r'^advanced-admin/', include(advanced_site.urls)),
-    )
+    urlpatterns = [
+        url(r'^basic-admin/', include(basic_site.urls)),
+        url(r'^advanced-admin/', include(advanced_site.urls)),
+    ]
 
 ``AdminSite`` instances take a single argument to their constructor, their
 name, which can be anything you like. This argument becomes the prefix to the
@@ -2504,11 +2518,6 @@ your URLconf. Specifically, add these four patterns:
     url(r'^admin/password_reset/done/$', 'django.contrib.auth.views.password_reset_done', name='password_reset_done'),
     url(r'^reset/(?P<uidb64>[0-9A-Za-z_\-]+)/(?P<token>.+)/$', 'django.contrib.auth.views.password_reset_confirm', name='password_reset_confirm'),
     url(r'^reset/done/$', 'django.contrib.auth.views.password_reset_complete', name='password_reset_complete'),
-
-.. versionchanged:: 1.6
-
-    The pattern for :func:`~django.contrib.auth.views.password_reset_confirm`
-    changed as the ``uid`` is now base 64 encoded.
 
 (This assumes you've added the admin at ``admin/`` and requires that you put
 the URLs starting with ``^admin/`` before the line that includes the admin app

@@ -99,6 +99,15 @@ to determine which application this configuration applies to. You can define
 any attributes documented in the :class:`~django.apps.AppConfig` API
 reference.
 
+.. note::
+
+    If your code imports the application registry in an application's
+    ``__init__.py``, the name ``apps`` will clash with the ``apps`` submodule.
+    The best practice is to move that code to a submodule and import it. A
+    workaround is to import the registry under a different name::
+
+        from django.apps import apps as django_apps
+
 For application users
 ---------------------
 
@@ -148,7 +157,7 @@ Configurable attributes
 
     Short name for the application, e.g. ``'admin'``
 
-    This attribute allows relabelling an application when two applications
+    This attribute allows relabeling an application when two applications
     have conflicting labels. It defaults to the last component of ``name``.
     It should be a valid Python identifier.
 
@@ -156,20 +165,23 @@ Configurable attributes
 
 .. attribute:: AppConfig.verbose_name
 
-    Human-readable name for the application, e.g. "Admin".
+    Human-readable name for the application, e.g. "Administration".
 
     This attribute defaults to ``label.title()``.
-
-Read-only attributes
---------------------
 
 .. attribute:: AppConfig.path
 
     Filesystem path to the application directory, e.g.
     ``'/usr/lib/python2.7/dist-packages/django/contrib/admin'``.
 
-    It may be ``None`` if the application isn't stored in a directory, for
-    instance if it's loaded from an egg.
+    In most cases, Django can automatically detect and set this, but you can
+    also provide an explicit override as a class attribute on your
+    :class:`~django.apps.AppConfig` subclass. In a few situations this is
+    required; for instance if the app package is a `namespace package`_ with
+    multiple paths.
+
+Read-only attributes
+--------------------
 
 .. attribute:: AppConfig.module
 
@@ -182,6 +194,10 @@ Read-only attributes
     from 'django/contrib/admin/models.pyc'>``.
 
     It may be ``None`` if the application doesn't contain a ``models`` module.
+    Note that the database related signals such as
+    :data:`~django.db.models.signals.pre_migrate` and
+    :data:`~django.db.models.signals.post_migrate`
+    are only emitted for applications that have a ``models`` module.
 
 Methods
 -------
@@ -209,6 +225,45 @@ Methods
         def ready(self):
             MyModel = self.get_model('MyModel')
 
+    .. warning::
+
+        Although you can access model classes as described above, avoid
+        interacting with the database in your :meth:`ready()` implementation.
+        This includes model methods that execute queries
+        (:meth:`~django.db.models.Model.save()`,
+        :meth:`~django.db.models.Model.delete()`, manager methods etc.), and
+        also raw SQL queries via ``django.db.connection``. Your
+        :meth:`ready()` method will run during startup of every management
+        command. For example, even though the test database configuration is
+        separate from the production settings, ``manage.py test`` would still
+        execute some queries against your **production** database!
+
+.. _namespace package:
+
+Namespace packages as apps (Python 3.3+)
+----------------------------------------
+
+Python versions 3.3 and later support Python packages without an
+``__init__.py`` file. These packages are known as "namespace packages" and may
+be spread across multiple directories at different locations on ``sys.path``
+(see :pep:`420`).
+
+Django applications require a single base filesystem path where Django
+(depending on configuration) will search for templates, static assets,
+etc. Thus, namespace packages may only be Django applications if one of the
+following is true:
+
+1. The namespace package actually has only a single location (i.e. is not
+   spread across more than one directory.)
+
+2. The :class:`~django.apps.AppConfig` class used to configure the application
+   has a :attr:`~django.apps.AppConfig.path` class attribute, which is the
+   absolute directory path Django will use as the single base path for the
+   application.
+
+If neither of these conditions is met, Django will raise
+:exc:`~django.core.exceptions.ImproperlyConfigured`.
+
 Application registry
 ====================
 
@@ -217,9 +272,10 @@ Application registry
     The application registry provides the following public API. Methods that
     aren't listed below are considered private and may change without notice.
 
-.. method:: apps.ready()
+.. attribute:: apps.ready
 
-    Returns ``True`` if the registry is fully populated.
+    Boolean attribute that is set to ``True`` when the registry is fully
+    populated.
 
 .. method:: apps.get_app_configs()
 
@@ -243,5 +299,10 @@ Application registry
 .. method:: apps.get_model(app_label, model_name)
 
     Returns the :class:`~django.db.models.Model` with the given ``app_label``
-    and ``model_name``. Raises :exc:`~exceptions.LookupError` if no such
-    application or model exists. ``model_name`` is case-insensitive.
+    and ``model_name``. As a shortcut, this method also accepts a single
+    argument in the form ``app_label.model_name``. ``model_name`` is case-
+    insensitive.
+
+    Raises :exc:`~exceptions.LookupError` if no such application or model
+    exists. Raises :exc:`~exceptions.ValueError` when called with a single
+    argument that doesn't contain exactly one dot.

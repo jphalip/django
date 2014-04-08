@@ -27,6 +27,7 @@ TEST_SETTINGS = {
 }
 
 
+@override_settings(ROOT_URLCONF='servers.urls')
 class LiveServerBase(LiveServerTestCase):
 
     available_apps = [
@@ -36,7 +37,6 @@ class LiveServerBase(LiveServerTestCase):
         'django.contrib.sessions',
     ]
     fixtures = ['testdata.json']
-    urls = 'servers.urls'
 
     @classmethod
     def setUpClass(cls):
@@ -140,7 +140,7 @@ class LiveServerViews(LiveServerBase):
     def test_no_collectstatic_emulation(self):
         """
         Test that LiveServerTestCase reports a 404 status code when HTTP client
-        tries to access a static file that isn't explictly put under
+        tries to access a static file that isn't explicitly put under
         STATIC_ROOT.
         """
         try:

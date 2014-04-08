@@ -1,9 +1,9 @@
 from django.apps import AppConfig
 from django.apps.registry import Apps
 from django.db import models
-from django.db.models.options import DEFAULT_NAMES, normalize_unique_together
+from django.db.models.options import DEFAULT_NAMES, normalize_together
 from django.utils import six
-from django.utils.module_loading import import_by_path
+from django.utils.module_loading import import_string
 
 
 class InvalidBasesError(ValueError):
@@ -73,8 +73,11 @@ class ProjectState(object):
 
 class AppConfigStub(AppConfig):
     """
-    Stubs a Django AppConfig. Only provides a label and a dict of models.
+    Stubs a Django AppConfig. Only provides a label, and a dict of models.
     """
+    # Not used, but required by AppConfig.__init__
+    path = ''
+
     def __init__(self, label):
         super(AppConfigStub, self).__init__(label, None)
 
@@ -112,7 +115,7 @@ class ModelState(object):
         fields = []
         for field in model._meta.local_fields:
             name, path, args, kwargs = field.deconstruct()
-            field_class = import_by_path(path)
+            field_class = import_string(path)
             try:
                 fields.append((name, field_class(*args, **kwargs)))
             except TypeError as e:
@@ -124,7 +127,7 @@ class ModelState(object):
                 ))
         for field in model._meta.local_many_to_many:
             name, path, args, kwargs = field.deconstruct()
-            field_class = import_by_path(path)
+            field_class = import_string(path)
             try:
                 fields.append((name, field_class(*args, **kwargs)))
             except TypeError as e:
@@ -142,9 +145,29 @@ class ModelState(object):
             elif name in model._meta.original_attrs:
                 if name == "unique_together":
                     ut = model._meta.original_attrs["unique_together"]
-                    options[name] = set(normalize_unique_together(ut))
+                    options[name] = set(normalize_together(ut))
+                elif name == "index_together":
+                    it = model._meta.original_attrs["index_together"]
+                    options[name] = set(normalize_together(it))
                 else:
                     options[name] = model._meta.original_attrs[name]
+
+        def flatten_bases(model):
+            bases = []
+            for base in model.__bases__:
+                if hasattr(base, "_meta") and base._meta.abstract:
+                    bases.extend(flatten_bases(base))
+                else:
+                    bases.append(base)
+            return bases
+
+        # We can't rely on __mro__ directly because we only want to flatten
+        # abstract models and not the whole tree. However by recursing on
+        # __bases__ we may end up with duplicates and ordering issues, we
+        # therefore discard any duplicates and reorder the bases according
+        # to their index in the MRO.
+        flattened_bases = sorted(set(flatten_bases(model)), key=lambda x: model.__mro__.index(x))
+
         # Make our record
         bases = tuple(
             (
@@ -152,12 +175,11 @@ class ModelState(object):
                 if hasattr(base, "_meta") else
                 base
             )
-            for base in model.__bases__
-            if (not hasattr(base, "_meta") or not base._meta.abstract)
+            for base in flattened_bases
         )
         # Ensure at least one base inherits from models.Model
         if not any((isinstance(base, six.string_types) or issubclass(base, models.Model)) for base in bases):
-            bases = (models.Model, )
+            bases = (models.Model,)
         return cls(
             model._meta.app_label,
             model._meta.object_name,
@@ -172,7 +194,7 @@ class ModelState(object):
         fields = []
         for name, field in self.fields:
             _, path, args, kwargs = field.deconstruct()
-            field_class = import_by_path(path)
+            field_class = import_string(path)
             fields.append((name, field_class(*args, **kwargs)))
         # Now make a copy
         return self.__class__(
@@ -194,7 +216,7 @@ class ModelState(object):
         # Then, work out our bases
         try:
             bases = tuple(
-                (apps.get_model(*base.split(".", 1)) if isinstance(base, six.string_types) else base)
+                (apps.get_model(base) if isinstance(base, six.string_types) else base)
                 for base in self.bases
             )
         except LookupError:

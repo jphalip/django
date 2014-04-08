@@ -6,28 +6,29 @@ from functools import update_wrapper
 import warnings
 
 from django.apps import apps
-from django.apps.base import MODELS_MODULE_NAME
-import django.db.models.manager  # NOQA: Imported to register signal handler.
+from django.apps.config import MODELS_MODULE_NAME
 from django.conf import settings
 from django.core import checks
 from django.core.exceptions import (ObjectDoesNotExist,
     MultipleObjectsReturned, FieldError, ValidationError, NON_FIELD_ERRORS)
+from django.db import (router, transaction, DatabaseError,
+    DEFAULT_DB_ALIAS)
+from django.db.models.deletion import Collector
 from django.db.models.fields import AutoField, FieldDoesNotExist
 from django.db.models.fields.related import (ForeignObjectRel, ManyToOneRel,
     OneToOneField, add_lazy_relation)
-from django.db import (router, transaction, DatabaseError,
-    DEFAULT_DB_ALIAS)
+from django.db.models.manager import ensure_default_manager
+from django.db.models.options import Options
 from django.db.models.query import Q
 from django.db.models.query_utils import DeferredAttribute, deferred_class_factory
-from django.db.models.deletion import Collector
-from django.db.models.options import Options
 from django.db.models import signals
-from django.utils.translation import ugettext_lazy as _
-from django.utils.functional import curry
-from django.utils.encoding import force_str, force_text
 from django.utils import six
+from django.utils.deprecation import RemovedInDjango19Warning
+from django.utils.encoding import force_str, force_text
+from django.utils.functional import curry
 from django.utils.six.moves import zip
 from django.utils.text import get_text_list, capfirst
+from django.utils.translation import ugettext_lazy as _
 
 
 def subclass_exception(name, parents, module, attached_to=None):
@@ -114,7 +115,7 @@ class ModelBase(type):
                     msg += "Its app_label will be set to None in Django 1.9."
                 else:
                     msg += "This will no longer be supported in Django 1.9."
-                warnings.warn(msg, PendingDeprecationWarning, stacklevel=2)
+                warnings.warn(msg, RemovedInDjango19Warning, stacklevel=2)
 
                 model_module = sys.modules[new_class.__module__]
                 package_components = model_module.__name__.split('.')
@@ -352,6 +353,7 @@ class ModelBase(type):
             cls.get_absolute_url = update_wrapper(curry(get_absolute_url, opts, cls.get_absolute_url),
                                                   cls.get_absolute_url)
 
+        ensure_default_manager(cls)
         signals.class_prepared.send(sender=cls)
 
 
@@ -624,7 +626,7 @@ class Model(six.with_metaclass(ModelBase)):
         if not meta.auto_created:
             signals.pre_save.send(sender=origin, instance=self, raw=raw, using=using,
                                   update_fields=update_fields)
-        with transaction.commit_on_success_unless_managed(using=using, savepoint=False):
+        with transaction.atomic(using=using, savepoint=False):
             if not raw:
                 self._save_parents(cls, using, update_fields)
             updated = self._save_table(raw, cls, force_insert, force_update, using, update_fields)
@@ -941,36 +943,52 @@ class Model(six.with_metaclass(ModelBase)):
                 )
         return errors
 
-    def date_error_message(self, lookup_type, field, unique_for):
+    def date_error_message(self, lookup_type, field_name, unique_for):
         opts = self._meta
-        return _("%(field_name)s must be unique for %(date_field)s %(lookup)s.") % {
-            'field_name': six.text_type(capfirst(opts.get_field(field).verbose_name)),
-            'date_field': six.text_type(capfirst(opts.get_field(unique_for).verbose_name)),
-            'lookup': lookup_type,
-        }
+        field = opts.get_field(field_name)
+        return ValidationError(
+            message=field.error_messages['unique_for_date'],
+            code='unique_for_date',
+            params={
+                'model': self,
+                'model_name': six.text_type(capfirst(opts.verbose_name)),
+                'lookup_type': lookup_type,
+                'field': field_name,
+                'field_label': six.text_type(capfirst(field.verbose_name)),
+                'date_field': unique_for,
+                'date_field_label': six.text_type(capfirst(opts.get_field(unique_for).verbose_name)),
+            }
+        )
 
     def unique_error_message(self, model_class, unique_check):
         opts = model_class._meta
-        model_name = capfirst(opts.verbose_name)
+
+        params = {
+            'model': self,
+            'model_class': model_class,
+            'model_name': six.text_type(capfirst(opts.verbose_name)),
+            'unique_check': unique_check,
+        }
 
         # A unique field
         if len(unique_check) == 1:
-            field_name = unique_check[0]
-            field = opts.get_field(field_name)
-            field_label = capfirst(field.verbose_name)
-            # Insert the error into the error dict, very sneaky
-            return field.error_messages['unique'] % {
-                'model_name': six.text_type(model_name),
-                'field_label': six.text_type(field_label)
-            }
+            field = opts.get_field(unique_check[0])
+            params['field_label'] = six.text_type(capfirst(field.verbose_name))
+            return ValidationError(
+                message=field.error_messages['unique'],
+                code='unique',
+                params=params,
+            )
+
         # unique_together
         else:
             field_labels = [capfirst(opts.get_field(f).verbose_name) for f in unique_check]
-            field_labels = get_text_list(field_labels, _('and'))
-            return _("%(model_name)s with this %(field_label)s already exists.") % {
-                'model_name': six.text_type(model_name),
-                'field_label': six.text_type(field_labels)
-            }
+            params['field_labels'] = six.text_type(get_text_list(field_labels, _('and')))
+            return ValidationError(
+                message=_("%(model_name)s with this %(field_labels)s already exists."),
+                code='unique_together',
+                params=params,
+            )
 
     def full_clean(self, exclude=None, validate_unique=True):
         """
@@ -1039,8 +1057,12 @@ class Model(six.with_metaclass(ModelBase)):
         if not cls._meta.swapped:
             errors.extend(cls._check_fields(**kwargs))
             errors.extend(cls._check_m2m_through_same_relationship())
-            errors.extend(cls._check_id_field())
-            errors.extend(cls._check_column_name_clashes())
+            clash_errors = cls._check_id_field() + cls._check_field_name_clashes()
+            errors.extend(clash_errors)
+            # If there are field name clashes, hide consequent column name
+            # clashes.
+            if not clash_errors:
+                errors.extend(cls._check_column_name_clashes())
             errors.extend(cls._check_index_together())
             errors.extend(cls._check_unique_together())
             errors.extend(cls._check_ordering())
@@ -1054,34 +1076,28 @@ class Model(six.with_metaclass(ModelBase)):
         errors = []
         if cls._meta.swapped:
             try:
-                app_label, model_name = cls._meta.swapped.split('.')
+                apps.get_model(cls._meta.swapped)
             except ValueError:
                 errors.append(
                     checks.Error(
-                        '"%s" is not of the form "app_label.app_name".' % cls._meta.swappable,
+                        "'%s' is not of the form 'app_label.app_name'." % cls._meta.swappable,
                         hint=None,
-                        obj=cls,
-                        id='E002',
+                        obj=None,
+                        id='models.E001',
                     )
                 )
-            else:
-                try:
-                    apps.get_model(app_label, model_name)
-                except LookupError:
-                    errors.append(
-                        checks.Error(
-                            ('The model has been swapped out for %s.%s '
-                             'which has not been installed or is abstract.') % (
-                                app_label, model_name
-                            ),
-                            hint=('Ensure that you did not misspell the model '
-                                  'name and the app name as well as the model '
-                                  'is not abstract. Does your INSTALLED_APPS '
-                                  'setting contain the "%s" app?') % app_label,
-                            obj=cls,
-                            id='E003',
-                        )
+            except LookupError:
+                app_label, model_name = cls._meta.swapped.split('.')
+                errors.append(
+                    checks.Error(
+                        ("'%s' references '%s.%s', which has not been installed, or is abstract.") % (
+                            cls._meta.swappable, app_label, model_name
+                        ),
+                        hint=None,
+                        obj=None,
+                        id='models.E002',
                     )
+                )
         return errors
 
     @classmethod
@@ -1126,13 +1142,14 @@ class Model(six.with_metaclass(ModelBase)):
             if signature in seen_intermediary_signatures:
                 errors.append(
                     checks.Error(
-                        ('The model has two many-to-many relations through '
-                         'the intermediary %s model, which is not permitted.') % (
+                        ("The model has two many-to-many relations through "
+                         "the intermediate model '%s.%s'.") % (
+                            f.rel.through._meta.app_label,
                             f.rel.through._meta.object_name
                         ),
                         hint=None,
                         obj=cls,
-                        id='E004',
+                        id='models.E003',
                     )
                 )
             else:
@@ -1149,17 +1166,70 @@ class Model(six.with_metaclass(ModelBase)):
         if fields and not fields[0].primary_key and cls._meta.pk.name == 'id':
             return [
                 checks.Error(
-                    ('You cannot use "id" as a field name, because each model '
-                     'automatically gets an "id" field if none '
-                     'of the fields have primary_key=True.'),
-                    hint=('Remove or rename "id" field '
-                          'or add primary_key=True to a field.'),
+                    ("'id' can only be used as a field name if the field also "
+                     "sets 'primary_key=True'."),
+                    hint=None,
                     obj=cls,
-                    id='E005',
+                    id='models.E004',
                 )
             ]
         else:
             return []
+
+    @classmethod
+    def _check_field_name_clashes(cls):
+        """ Ref #17673. """
+
+        errors = []
+        used_fields = {}  # name or attname -> field
+
+        # Check that multi-inheritance doesn't cause field name shadowing.
+        for parent in cls._meta.parents:
+            for f in parent._meta.local_fields:
+                clash = used_fields.get(f.name) or used_fields.get(f.attname) or None
+                if clash:
+                    errors.append(
+                        checks.Error(
+                            ("The field '%s' from parent model "
+                             "'%s' clashes with the field '%s' "
+                             "from parent model '%s'.") % (
+                                clash.name, clash.model._meta,
+                                f.name, f.model._meta
+                            ),
+                            hint=None,
+                            obj=cls,
+                            id='models.E005',
+                        )
+                    )
+                used_fields[f.name] = f
+                used_fields[f.attname] = f
+
+        # Check that fields defined in the model don't clash with fields from
+        # parents.
+        for f in cls._meta.local_fields:
+            clash = used_fields.get(f.name) or used_fields.get(f.attname) or None
+            # Note that we may detect clash between user-defined non-unique
+            # field "id" and automatically added unique field "id", both
+            # defined at the same model. This special case is considered in
+            # _check_id_field and here we ignore it.
+            id_conflict = (f.name == "id" and
+                clash and clash.name == "id" and clash.model == cls)
+            if clash and not id_conflict:
+                errors.append(
+                    checks.Error(
+                        ("The field '%s' clashes with the field '%s' "
+                         "from model '%s'.") % (
+                            f.name, clash.name, clash.model._meta
+                        ),
+                        hint=None,
+                        obj=f,
+                        id='models.E006',
+                    )
+                )
+            used_fields[f.name] = f
+            used_fields[f.attname] = f
+
+        return errors
 
     @classmethod
     def _check_column_name_clashes(cls):
@@ -1174,9 +1244,10 @@ class Model(six.with_metaclass(ModelBase)):
             if column_name and column_name in used_column_names:
                 errors.append(
                     checks.Error(
-                        'Field "%s" has column name "%s" that is already used.' % (f.name, column_name),
-                        hint=None,
+                        "Field '%s' has column name '%s' that is used by another field." % (f.name, column_name),
+                        hint="Specify a 'db_column' for the field.",
                         obj=cls,
+                        id='models.E007'
                     )
                 )
             else:
@@ -1190,10 +1261,10 @@ class Model(six.with_metaclass(ModelBase)):
         if not isinstance(cls._meta.index_together, (tuple, list)):
             return [
                 checks.Error(
-                    '"index_together" must be a list or tuple.',
+                    "'index_together' must be a list or tuple.",
                     hint=None,
                     obj=cls,
-                    id='E006',
+                    id='models.E008',
                 )
             ]
 
@@ -1201,10 +1272,10 @@ class Model(six.with_metaclass(ModelBase)):
                 for fields in cls._meta.index_together):
             return [
                 checks.Error(
-                    'All "index_together" elements must be lists or tuples.',
+                    "All 'index_together' elements must be lists or tuples.",
                     hint=None,
                     obj=cls,
-                    id='E007',
+                    id='models.E009',
                 )
             ]
 
@@ -1220,10 +1291,10 @@ class Model(six.with_metaclass(ModelBase)):
         if not isinstance(cls._meta.unique_together, (tuple, list)):
             return [
                 checks.Error(
-                    '"unique_together" must be a list or tuple.',
+                    "'unique_together' must be a list or tuple.",
                     hint=None,
                     obj=cls,
-                    id='E008',
+                    id='models.E010',
                 )
             ]
 
@@ -1231,10 +1302,10 @@ class Model(six.with_metaclass(ModelBase)):
                 for fields in cls._meta.unique_together):
             return [
                 checks.Error(
-                    'All "unique_together" elements must be lists or tuples.',
+                    "All 'unique_together' elements must be lists or tuples.",
                     hint=None,
                     obj=cls,
-                    id='E009',
+                    id='models.E011',
                 )
             ]
 
@@ -1256,23 +1327,23 @@ class Model(six.with_metaclass(ModelBase)):
             except models.FieldDoesNotExist:
                 errors.append(
                     checks.Error(
-                        '"%s" points to a missing field named "%s".' % (option, field_name),
-                        hint='Ensure that you did not misspell the field name.',
+                        "'%s' refers to the non-existent field '%s'." % (option, field_name),
+                        hint=None,
                         obj=cls,
-                        id='E010',
+                        id='models.E012',
                     )
                 )
             else:
                 if isinstance(field.rel, models.ManyToManyRel):
                     errors.append(
                         checks.Error(
-                            ('"%s" refers to a m2m "%s" field, but '
-                             'ManyToManyFields are not supported in "%s".') % (
+                            ("'%s' refers to a ManyToManyField '%s', but "
+                             "ManyToManyFields are not permitted in '%s'.") % (
                                 option, field_name, option
                             ),
                             hint=None,
                             obj=cls,
-                            id='E011',
+                            id='models.E013',
                         )
                     )
         return errors
@@ -1290,11 +1361,11 @@ class Model(six.with_metaclass(ModelBase)):
         if not isinstance(cls._meta.ordering, (list, tuple)):
             return [
                 checks.Error(
-                    ('"ordering" must be a tuple or list '
-                     '(even if you want to order by only one field).'),
+                    ("'ordering' must be a tuple or list "
+                     "(even if you want to order by only one field)."),
                     hint=None,
                     obj=cls,
-                    id='E012',
+                    id='models.E014',
                 )
             ]
 
@@ -1325,10 +1396,10 @@ class Model(six.with_metaclass(ModelBase)):
             except FieldDoesNotExist:
                 errors.append(
                     checks.Error(
-                        '"ordering" pointing to a missing "%s" field.' % field_name,
-                        hint='Ensure that you did not misspell the field name.',
+                        "'ordering' refers to the non-existent field '%s'." % field_name,
+                        hint=None,
                         obj=cls,
-                        id='E013',
+                        id='models.E015',
                     )
                 )
         return errors
@@ -1347,7 +1418,7 @@ def method_set_order(ordered_obj, self, id_list, using=None):
     order_name = ordered_obj._meta.order_with_respect_to.name
     # FIXME: It would be nice if there was an "update many" version of update
     # for situations like this.
-    with transaction.commit_on_success_unless_managed(using=using):
+    with transaction.atomic(using=using, savepoint=False):
         for i, j in enumerate(id_list):
             ordered_obj.objects.filter(**{'pk': j, order_name: rel_val}).update(_order=i)
 

@@ -55,9 +55,8 @@ class SpatiaLiteCreation(DatabaseCreation):
 
         call_command('createcachetable', database=self.connection.alias)
 
-        # Get a cursor (even though we don't need one yet). This has
-        # the side effect of initializing the test database.
-        self.connection.cursor()
+        # Ensure a connection for the side effect of initializing the test database.
+        self.connection.ensure_connection()
 
         return test_database_name
 
@@ -117,7 +116,7 @@ class SpatiaLiteCreation(DatabaseCreation):
 
     def spatialite_init_file(self):
         # SPATIALITE_SQL may be placed in settings to tell GeoDjango
-        # to use a specific path to the SpatiaLite initilization SQL.
+        # to use a specific path to the SpatiaLite initialization SQL.
         return getattr(settings, 'SPATIALITE_SQL',
                        'init_spatialite-%s.%s.sql' %
                        self.connection.ops.spatial_version[:2])

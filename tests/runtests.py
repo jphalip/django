@@ -11,8 +11,13 @@ import warnings
 
 import django
 from django import contrib
+from django.utils.deprecation import RemovedInDjango19Warning, RemovedInDjango20Warning
 from django.utils._os import upath
 from django.utils import six
+
+
+warnings.simplefilter("default", RemovedInDjango19Warning)
+warnings.simplefilter("default", RemovedInDjango20Warning)
 
 CONTRIB_MODULE_PATH = 'django.contrib'
 
@@ -25,10 +30,7 @@ TEMP_DIR = tempfile.mkdtemp(prefix='django_')
 os.environ['DJANGO_TEST_TEMP_DIR'] = TEMP_DIR
 
 SUBDIRS_TO_SKIP = [
-    'coverage_html',
     'data',
-    'requirements',
-    'templates',
     'test_discovery_sample',
     'test_discovery_sample2',
     'test_runner_deprecation_app',
@@ -43,7 +45,6 @@ ALWAYS_INSTALLED_APPS = [
     'django.contrib.redirects',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.comments',
     'django.contrib.admin.apps.SimpleAdminConfig',
     'django.contrib.admindocs',
     'django.contrib.staticfiles',
@@ -70,11 +71,10 @@ def get_test_modules():
     for modpath, dirpath in discovery_paths:
         for f in os.listdir(dirpath):
             if ('.' in f or
-                    # Python 3 byte code dirs (PEP 3147)
-                    f == '__pycache__' or
                     f.startswith('sql') or
                     os.path.basename(f) in SUBDIRS_TO_SKIP or
-                    os.path.isfile(f)):
+                    os.path.isfile(f) or
+                    not os.path.exists(os.path.join(dirpath, f, '__init__.py'))):
                 continue
             modules.append((modpath, f))
     return modules
@@ -125,16 +125,6 @@ def setup(verbosity, test_labels):
         handler = logging.StreamHandler()
         logger.addHandler(handler)
 
-    warnings.filterwarnings(
-        'ignore',
-        'django.contrib.comments is deprecated and will be removed before Django 1.8.',
-        DeprecationWarning
-    )
-    warnings.filterwarnings(
-        'ignore',
-        'Model class django.contrib.comments.models.*supported in Django 1.9.',
-        PendingDeprecationWarning
-    )
     # Load all the ALWAYS_INSTALLED_APPS.
     django.setup()
 
@@ -220,7 +210,7 @@ def django_tests(verbosity, interactive, failfast, test_labels):
             'ignore',
             "Custom SQL location '<app_label>/models/sql' is deprecated, "
             "use '<app_label>/sql' instead.",
-            PendingDeprecationWarning
+            RemovedInDjango19Warning
         )
         failures = test_runner.run_tests(
             test_labels or get_installed(), extra_tests=extra_tests)

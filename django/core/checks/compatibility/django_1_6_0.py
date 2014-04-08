@@ -36,7 +36,7 @@ def _check_test_runner(app_configs=None, **kwargs):
     # contributes a weight; if enough of them trigger, we've got a likely 1.6 project.
     weight = 0
 
-    # If TEST_RUNNER is explicitly set, it's all a moot point - if it's been explcitly set,
+    # If TEST_RUNNER is explicitly set, it's all a moot point - if it's been explicitly set,
     # the user has opted into a specific set of behaviors, which won't change as the
     # default changes.
     if not settings.is_overridden('TEST_RUNNER'):
@@ -105,7 +105,7 @@ def _check_boolean_field_default_value(app_configs=None, **kwargs):
 
     return [
         Warning(
-            "BooleanField does not have a default value. ",
+            "BooleanField does not have a default value.",
             hint=("Django 1.6 changed the default value of BooleanField from False to None. "
                   "See https://docs.djangoproject.com/en/1.6/ref/models/fields/#booleanfield "
                   "for more information."),

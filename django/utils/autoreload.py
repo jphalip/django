@@ -81,7 +81,10 @@ def gen_filenames():
     Yields a generator over filenames referenced in sys.modules and translation
     files.
     """
-    filenames = [filename.__file__ for filename in sys.modules.values()
+    # N.B. ``list(...)`` is needed, because this runs in parallel with
+    # application code which might be mutating ``sys.modules``, and this will
+    # fail with RuntimeError: cannot mutate dictionary while iterating
+    filenames = [filename.__file__ for filename in list(sys.modules.values())
                 if hasattr(filename, '__file__')]
 
     if settings.USE_I18N:

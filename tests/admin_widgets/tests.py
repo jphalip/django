@@ -178,13 +178,13 @@ class AdminFormfieldForDBFieldTests(TestCase):
                              filter_vertical=['companies'])
         ma = AdvisorAdmin(models.Advisor, admin.site)
         f = ma.formfield_for_dbfield(models.Advisor._meta.get_field('companies'), request=None)
-        self.assertEqual(six.text_type(f.help_text), ' Hold down "Control", or "Command" on a Mac, to select more than one.')
+        self.assertEqual(six.text_type(f.help_text), 'Hold down "Control", or "Command" on a Mac, to select more than one.')
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+    ROOT_URLCONF='admin_widgets.urls')
 class AdminFormfieldForDBFieldWithRequestTests(DjangoTestCase):
     fixtures = ["admin-widgets-users.xml"]
-    urls = 'admin_widgets.urls'
 
     def testFilterChoicesByRequestUser(self):
         """
@@ -196,10 +196,10 @@ class AdminFormfieldForDBFieldWithRequestTests(DjangoTestCase):
         self.assertContains(response, "Volkswagon Passat")
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+    ROOT_URLCONF='admin_widgets.urls')
 class AdminForeignKeyWidgetChangeList(DjangoTestCase):
     fixtures = ["admin-widgets-users.xml"]
-    urls = 'admin_widgets.urls'
 
     def setUp(self):
         self.client.login(username="super", password="secret")
@@ -212,10 +212,10 @@ class AdminForeignKeyWidgetChangeList(DjangoTestCase):
         self.assertContains(response, '/auth/user/add/')
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+    ROOT_URLCONF='admin_widgets.urls')
 class AdminForeignKeyRawIdWidget(DjangoTestCase):
     fixtures = ["admin-widgets-users.xml"]
-    urls = 'admin_widgets.urls'
 
     def setUp(self):
         self.client.login(username="super", password="secret")
@@ -391,8 +391,8 @@ class AdminFileWidgetTest(DjangoTestCase):
         )
 
 
+@override_settings(ROOT_URLCONF='admin_widgets.urls')
 class ForeignKeyRawIdWidgetTest(DjangoTestCase):
-    urls = 'admin_widgets.urls'
 
     def test_render(self):
         band = models.Band.objects.create(name='Linkin Park')
@@ -465,8 +465,8 @@ class ForeignKeyRawIdWidgetTest(DjangoTestCase):
         )
 
 
+@override_settings(ROOT_URLCONF='admin_widgets.urls')
 class ManyToManyRawIdWidgetTest(DjangoTestCase):
-    urls = 'admin_widgets.urls'
 
     def test_render(self):
         band = models.Band.objects.create(name='Linkin Park')
@@ -518,12 +518,12 @@ class RelatedFieldWidgetWrapperTests(DjangoTestCase):
         self.assertFalse(w.can_add_related)
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+                   ROOT_URLCONF='admin_widgets.urls')
 class DateTimePickerSeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
-    urls = "admin_widgets.urls"
 
     def test_show_hide_date_time_picker_widgets(self):
         """
@@ -642,12 +642,12 @@ class DateTimePickerSeleniumTests(AdminSeleniumWebDriverTestCase):
 
 
 @skipIf(pytz is None, "this test requires pytz")
-@override_settings(TIME_ZONE='Asia/Singapore')
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+                   ROOT_URLCONF='admin_widgets.urls',
+                   TIME_ZONE='Asia/Singapore')
 class DateTimePickerShortcutsSeleniumTests(AdminSeleniumWebDriverTestCase):
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
-    urls = "admin_widgets.urls"
 
     def test_date_time_picker_shortcuts(self):
         """
@@ -702,12 +702,12 @@ class DateTimePickerShortcutsSeleniumTests(AdminSeleniumWebDriverTestCase):
         self.assertLess(member.birthdate, now + error_margin)
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+                   ROOT_URLCONF='admin_widgets.urls')
 class HorizontalVerticalFilterSeleniumTests(AdminSeleniumWebDriverTestCase):
 
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
-    urls = "admin_widgets.urls"
 
     def setUp(self):
         self.lisa = models.Student.objects.create(name='Lisa')
@@ -937,11 +937,11 @@ class HorizontalVerticalFilterSeleniumTests(AdminSeleniumWebDriverTestCase):
                          [self.jason, self.peter])
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+                   ROOT_URLCONF='admin_widgets.urls')
 class AdminRawIdWidgetSeleniumTests(AdminSeleniumWebDriverTestCase):
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
-    urls = "admin_widgets.urls"
 
     def setUp(self):
         models.Band.objects.create(id=42, name='Bogey Blues')
@@ -1020,12 +1020,11 @@ class AdminRawIdWidgetSeleniumTests(AdminSeleniumWebDriverTestCase):
 
 
 
-@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
+@override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
+                   ROOT_URLCONF='admin_widgets.urls')
 class RelatedFieldWidgetSeleniumTests(AdminSeleniumWebDriverTestCase):
     available_apps = ['admin_widgets'] + AdminSeleniumWebDriverTestCase.available_apps
     fixtures = ['admin-widgets-users.xml']
-    urls = "admin_widgets.urls"
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
     def test_foreign_key_using_to_field(self):
         self.admin_login(username='super', password='secret', login_url='/')

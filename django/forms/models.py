@@ -6,19 +6,19 @@ and database field objects.
 from __future__ import unicode_literals
 
 from collections import OrderedDict
-import warnings
 
-from django.core.exceptions import ValidationError, NON_FIELD_ERRORS, FieldError
+from django.core.exceptions import (
+    ImproperlyConfigured, ValidationError, NON_FIELD_ERRORS, FieldError)
 from django.forms.fields import Field, ChoiceField
 from django.forms.forms import DeclarativeFieldsMetaclass, BaseForm
 from django.forms.formsets import BaseFormSet, formset_factory
 from django.forms.utils import ErrorList
 from django.forms.widgets import (SelectMultiple, HiddenInput,
-    MultipleHiddenInput, CheckboxSelectMultiple)
-from django.utils.encoding import smart_text, force_text
+    MultipleHiddenInput)
 from django.utils import six
+from django.utils.encoding import smart_text, force_text
 from django.utils.text import get_text_list, capfirst
-from django.utils.translation import ugettext_lazy as _, ugettext, string_concat
+from django.utils.translation import ugettext_lazy as _, ugettext
 
 
 __all__ = (
@@ -44,7 +44,7 @@ def construct_instance(form, instance, fields=None, exclude=None):
     file_field_list = []
     for f in opts.fields:
         if not f.editable or isinstance(f, models.AutoField) \
-                or not f.name in cleaned_data:
+                or f.name not in cleaned_data:
             continue
         if fields is not None and f.name not in fields:
             continue
@@ -128,7 +128,7 @@ def model_to_dict(instance, fields=None, exclude=None):
     for f in opts.concrete_fields + opts.virtual_fields + opts.many_to_many:
         if not getattr(f, 'editable', False):
             continue
-        if fields and not f.name in fields:
+        if fields and f.name not in fields:
             continue
         if exclude and f.name in exclude:
             continue
@@ -187,7 +187,7 @@ def fields_for_model(model, fields=None, exclude=None, widgets=None,
     for f in sorted(opts.concrete_fields + sortable_virtual_fields + opts.many_to_many):
         if not getattr(f, 'editable', False):
             continue
-        if fields is not None and not f.name in fields:
+        if fields is not None and f.name not in fields:
             continue
         if exclude and f.name in exclude:
             continue
@@ -264,12 +264,11 @@ class ModelFormMetaclass(DeclarativeFieldsMetaclass):
         if opts.model:
             # If a model is defined, extract form fields from it.
             if opts.fields is None and opts.exclude is None:
-                # This should be some kind of assertion error once deprecation
-                # cycle is complete.
-                warnings.warn("Creating a ModelForm without either the 'fields' attribute "
-                              "or the 'exclude' attribute is deprecated - form %s "
-                              "needs updating" % name,
-                              DeprecationWarning, stacklevel=2)
+                raise ImproperlyConfigured(
+                    "Creating a ModelForm without either the 'fields' attribute "
+                    "or the 'exclude' attribute is prohibited; form %s "
+                    "needs updating." % name
+                )
 
             if opts.fields == ALL_FIELDS:
                 # Sentinel for fields_for_model to indicate "get the list of
@@ -324,6 +323,15 @@ class BaseModelForm(BaseForm):
         self._validate_unique = False
         super(BaseModelForm, self).__init__(data, files, auto_id, prefix, object_data,
                                             error_class, label_suffix, empty_permitted)
+        # Apply ``limit_choices_to`` to each field.
+        for field_name in self.fields:
+            formfield = self.fields[field_name]
+            if hasattr(formfield, 'queryset'):
+                limit_choices_to = formfield.limit_choices_to
+                if limit_choices_to is not None:
+                    if callable(limit_choices_to):
+                        limit_choices_to = limit_choices_to()
+                    formfield.queryset = formfield.queryset.complex_filter(limit_choices_to)
 
     def _get_validation_exclusions(self):
         """
@@ -373,15 +381,21 @@ class BaseModelForm(BaseForm):
 
     def _update_errors(self, errors):
         # Override any validation error messages defined at the model level
-        # with those defined on the form fields.
+        # with those defined at the form level.
+        opts = self._meta
         for field, messages in errors.error_dict.items():
-            if field not in self.fields:
+            if (field == NON_FIELD_ERRORS and opts.error_messages and
+                    NON_FIELD_ERRORS in opts.error_messages):
+                error_messages = opts.error_messages[NON_FIELD_ERRORS]
+            elif field in self.fields:
+                error_messages = self.fields[field].error_messages
+            else:
                 continue
-            field = self.fields[field]
+
             for message in messages:
                 if (isinstance(message, ValidationError) and
-                        message.code in field.error_messages):
-                    message.message = field.error_messages[message.code]
+                        message.code in error_messages):
+                    message.message = error_messages[message.code]
 
         self.add_error(None, errors)
 
@@ -511,14 +525,12 @@ def modelform_factory(model, form=ModelForm, fields=None, exclude=None,
         'formfield_callback': formfield_callback
     }
 
-    # The ModelFormMetaclass will trigger a similar warning/error, but this will
-    # be difficult to debug for code that needs updating, so we produce the
-    # warning here too.
     if (getattr(Meta, 'fields', None) is None and
             getattr(Meta, 'exclude', None) is None):
-        warnings.warn("Calling modelform_factory without defining 'fields' or "
-                      "'exclude' explicitly is deprecated",
-                      DeprecationWarning, stacklevel=2)
+        raise ImproperlyConfigured(
+            "Calling modelform_factory without defining 'fields' or "
+            "'exclude' explicitly is prohibited."
+        )
 
     # Instatiate type(form) in order to use the same metaclass as form.
     return type(form)(class_name, (form,), form_class_attrs)
@@ -646,7 +658,7 @@ class BaseModelFormSet(BaseFormSet):
                 # Reduce Model instances to their primary key values
                 row_data = tuple(d._get_pk_val() if hasattr(d, '_get_pk_val') else d
                                  for d in row_data)
-                if row_data and not None in row_data:
+                if row_data and None not in row_data:
                     # if we've already seen it then we have a uniqueness failure
                     if row_data in seen_data:
                         # poke error messages into the right places and mark
@@ -797,20 +809,15 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
     """
     Returns a FormSet class for the given Django model class.
     """
-    # modelform_factory will produce the same warning/error, but that will be
-    # difficult to debug for code that needs upgrading, so we produce the
-    # warning here too. This logic is reproducing logic inside
-    # modelform_factory, but it can be removed once the deprecation cycle is
-    # complete, since the validation exception will produce a helpful
-    # stacktrace.
     meta = getattr(form, 'Meta', None)
     if meta is None:
         meta = type(str('Meta'), (object,), {})
     if (getattr(meta, 'fields', fields) is None and
             getattr(meta, 'exclude', exclude) is None):
-        warnings.warn("Calling modelformset_factory without defining 'fields' or "
-                      "'exclude' explicitly is deprecated",
-                      DeprecationWarning, stacklevel=2)
+        raise ImproperlyConfigured(
+            "Calling modelformset_factory without defining 'fields' or "
+            "'exclude' explicitly is prohibited."
+        )
 
     form = modelform_factory(model, form=form, fields=fields, exclude=exclude,
                              formfield_callback=formfield_callback,
@@ -1076,7 +1083,8 @@ class ModelChoiceField(ChoiceField):
 
     def __init__(self, queryset, empty_label="---------", cache_choices=False,
                  required=True, widget=None, label=None, initial=None,
-                 help_text='', to_field_name=None, *args, **kwargs):
+                 help_text='', to_field_name=None, limit_choices_to=None,
+                 *args, **kwargs):
         if required and (initial is not None):
             self.empty_label = None
         else:
@@ -1088,6 +1096,7 @@ class ModelChoiceField(ChoiceField):
         Field.__init__(self, required, widget, label, initial, help_text,
                        *args, **kwargs)
         self.queryset = queryset
+        self.limit_choices_to = limit_choices_to   # limit the queryset later.
         self.choice_cache = None
         self.to_field_name = to_field_name
 
@@ -1177,10 +1186,6 @@ class ModelMultipleChoiceField(ModelChoiceField):
         super(ModelMultipleChoiceField, self).__init__(queryset, None,
             cache_choices, required, widget, label, initial, help_text,
             *args, **kwargs)
-        # Remove this in Django 1.8
-        if isinstance(self.widget, SelectMultiple) and not isinstance(self.widget, CheckboxSelectMultiple):
-            msg = _('Hold down "Control", or "Command" on a Mac, to select more than one.')
-            self.help_text = string_concat(self.help_text, ' ', msg)
 
     def to_python(self, value):
         if not value:

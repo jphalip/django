@@ -4,9 +4,10 @@ from django.conf import settings
 from django.core.exceptions import FieldError
 from django.db.backends.utils import truncate_name
 from django.db.models.constants import LOOKUP_SEP
+from django.db.models.expressions import ExpressionNode
 from django.db.models.query_utils import select_related_descend, QueryWrapper
-from django.db.models.sql.constants import (SINGLE, MULTI, ORDER_DIR,
-        GET_ITERATOR_CHUNK_SIZE, SelectInfo)
+from django.db.models.sql.constants import (CURSOR, SINGLE, MULTI, NO_RESULTS,
+        ORDER_DIR, GET_ITERATOR_CHUNK_SIZE, SelectInfo)
 from django.db.models.sql.datastructures import EmptyResultSet
 from django.db.models.sql.expressions import SQLEvaluator
 from django.db.models.sql.query import get_order_dir, Query
@@ -762,6 +763,8 @@ class SQLCompiler(object):
         is needed, as the filters describe an empty set. In that case, None is
         returned, to avoid any unnecessary database interaction.
         """
+        if not result_type:
+            result_type = NO_RESULTS
         try:
             sql, params = self.as_sql()
             if not sql:
@@ -773,27 +776,44 @@ class SQLCompiler(object):
                 return
 
         cursor = self.connection.cursor()
-        cursor.execute(sql, params)
+        try:
+            cursor.execute(sql, params)
+        except Exception:
+            cursor.close()
+            raise
 
-        if not result_type:
+        if result_type == CURSOR:
+            # Caller didn't specify a result_type, so just give them back the
+            # cursor to process (and close).
             return cursor
         if result_type == SINGLE:
-            if self.ordering_aliases:
-                return cursor.fetchone()[:-len(self.ordering_aliases)]
-            return cursor.fetchone()
+            try:
+                if self.ordering_aliases:
+                    return cursor.fetchone()[:-len(self.ordering_aliases)]
+                return cursor.fetchone()
+            finally:
+                # done with the cursor
+                cursor.close()
+        if result_type == NO_RESULTS:
+            cursor.close()
+            return
 
         # The MULTI case.
         if self.ordering_aliases:
             result = order_modified_iter(cursor, len(self.ordering_aliases),
                     self.connection.features.empty_fetchmany_value)
         else:
-            result = iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
-                    self.connection.features.empty_fetchmany_value)
+            result = cursor_iter(cursor,
+                self.connection.features.empty_fetchmany_value)
         if not self.connection.features.can_use_chunked_reads:
-            # If we are using non-chunked reads, we return the same data
-            # structure as normally, but ensure it is all read into memory
-            # before going any further.
-            return list(result)
+            try:
+                # If we are using non-chunked reads, we return the same data
+                # structure as normally, but ensure it is all read into memory
+                # before going any further.
+                return list(result)
+            finally:
+                # done with the cursor
+                cursor.close()
         return result
 
     def as_subquery_condition(self, alias, columns, qn):
@@ -871,7 +891,7 @@ class SQLInsertCompiler(SQLCompiler):
             col = "%s.%s" % (qn(opts.db_table), qn(opts.pk.column))
             result.append("VALUES (%s)" % ", ".join(placeholders[0]))
             r_fmt, r_params = self.connection.ops.return_insert_id()
-            # Skip empty r_fmt to allow subclasses to customize behaviour for
+            # Skip empty r_fmt to allow subclasses to customize behavior for
             # 3rd party backends. Refs #19096.
             if r_fmt:
                 result.append(r_fmt % col)
@@ -889,15 +909,15 @@ class SQLInsertCompiler(SQLCompiler):
     def execute_sql(self, return_id=False):
         assert not (return_id and len(self.query.objs) != 1)
         self.return_id = return_id
-        cursor = self.connection.cursor()
-        for sql, params in self.as_sql():
-            cursor.execute(sql, params)
-        if not (return_id and cursor):
-            return
-        if self.connection.features.can_return_id_from_insert:
-            return self.connection.ops.fetch_returned_insert_id(cursor)
-        return self.connection.ops.last_insert_id(cursor,
-                self.query.get_meta().db_table, self.query.get_meta().pk.column)
+        with self.connection.cursor() as cursor:
+            for sql, params in self.as_sql():
+                cursor.execute(sql, params)
+            if not (return_id and cursor):
+                return
+            if self.connection.features.can_return_id_from_insert:
+                return self.connection.ops.fetch_returned_insert_id(cursor)
+            return self.connection.ops.last_insert_id(cursor,
+                    self.query.get_meta().db_table, self.query.get_meta().pk.column)
 
 
 class SQLDeleteCompiler(SQLCompiler):
@@ -932,7 +952,13 @@ class SQLUpdateCompiler(SQLCompiler):
         values, update_params = [], []
         for field, model, val in self.query.values:
             if hasattr(val, 'prepare_database_save'):
-                val = val.prepare_database_save(field)
+                if field.rel or isinstance(val, ExpressionNode):
+                    val = val.prepare_database_save(field)
+                else:
+                    raise TypeError("Database is trying to update a relational field "
+                                    "of type %s with a value of type %s. Make sure "
+                                    "you are setting the correct relations" %
+                                    (field.__class__.__name__, val.__class__.__name__))
             else:
                 val = field.get_db_prep_save(val, connection=self.connection)
 
@@ -970,12 +996,15 @@ class SQLUpdateCompiler(SQLCompiler):
         related queries are not available.
         """
         cursor = super(SQLUpdateCompiler, self).execute_sql(result_type)
-        rows = cursor.rowcount if cursor else 0
-        is_empty = cursor is None
-        del cursor
+        try:
+            rows = cursor.rowcount if cursor else 0
+            is_empty = cursor is None
+        finally:
+            if cursor:
+                cursor.close()
         for query in self.query.get_related_updates():
             aux_rows = query.get_compiler(self.using).execute_sql(result_type)
-            if is_empty:
+            if is_empty and aux_rows:
                 rows = aux_rows
                 is_empty = False
         return rows
@@ -1111,6 +1140,19 @@ class SQLDateTimeCompiler(SQLCompiler):
                 yield datetime
 
 
+def cursor_iter(cursor, sentinel):
+    """
+    Yields blocks of rows from a cursor and ensures the cursor is closed when
+    done.
+    """
+    try:
+        for rows in iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
+                sentinel):
+            yield rows
+    finally:
+        cursor.close()
+
+
 def order_modified_iter(cursor, trim, sentinel):
     """
     Yields blocks of rows from a cursor. We use this iterator in the special
@@ -1118,6 +1160,9 @@ def order_modified_iter(cursor, trim, sentinel):
     requirements. We must trim those extra columns before anything else can use
     the results, since they're only needed to make the SQL valid.
     """
-    for rows in iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
-            sentinel):
-        yield [r[:-trim] for r in rows]
+    try:
+        for rows in iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
+                sentinel):
+            yield [r[:-trim] for r in rows]
+    finally:
+        cursor.close()

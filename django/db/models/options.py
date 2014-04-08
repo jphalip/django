@@ -2,7 +2,6 @@ from __future__ import unicode_literals
 
 from bisect import bisect
 from collections import OrderedDict
-import warnings
 
 from django.apps import apps
 from django.conf import settings
@@ -10,8 +9,8 @@ from django.db.models.fields.related import ManyToManyRel
 from django.db.models.fields import AutoField, FieldDoesNotExist
 from django.db.models.fields.proxy import OrderWrt
 from django.utils import six
-from django.utils.functional import cached_property
 from django.utils.encoding import force_text, smart_text, python_2_unicode_compatible
+from django.utils.functional import cached_property
 from django.utils.text import camel_case_to_spaces
 from django.utils.translation import activate, deactivate_all, get_language, string_concat
 
@@ -24,24 +23,26 @@ DEFAULT_NAMES = ('verbose_name', 'verbose_name_plural', 'db_table', 'ordering',
                  'select_on_save')
 
 
-def normalize_unique_together(unique_together):
+def normalize_together(option_together):
     """
-    unique_together can be either a tuple of tuples, or a single
+    option_together can be either a tuple of tuples, or a single
     tuple of two strings. Normalize it to a tuple of tuples, so that
     calling code can uniformly expect that.
     """
     try:
-        if not unique_together:
+        if not option_together:
             return ()
-        first_element = next(iter(unique_together))
+        if not isinstance(option_together, (tuple, list)):
+            raise TypeError
+        first_element = next(iter(option_together))
         if not isinstance(first_element, (tuple, list)):
-            unique_together = (unique_together,)
+            option_together = (option_together,)
         # Normalize everything to tuples
-        return tuple(tuple(ut) for ut in unique_together)
+        return tuple(tuple(ot) for ot in option_together)
     except TypeError:
-        # If the value of unique_together isn't valid, return it
+        # If the value of option_together isn't valid, return it
         # verbatim; this will be picked up by the check framework later.
-        return unique_together
+        return option_together
 
 
 @python_2_unicode_compatible
@@ -140,7 +141,10 @@ class Options(object):
                     self.original_attrs[attr_name] = getattr(self, attr_name)
 
             ut = meta_attrs.pop('unique_together', self.unique_together)
-            self.unique_together = normalize_unique_together(ut)
+            self.unique_together = normalize_together(ut)
+
+            it = meta_attrs.pop('index_together', self.index_together)
+            self.index_together = normalize_together(it)
 
             # verbose_name_plural is a special case because it uses a 's'
             # by default.
@@ -158,16 +162,6 @@ class Options(object):
         if not self.db_table:
             self.db_table = "%s_%s" % (self.app_label, self.model_name)
             self.db_table = truncate_name(self.db_table, connection.ops.max_name_length())
-
-    @property
-    def module_name(self):
-        """
-        This property has been deprecated in favor of `model_name`. refs #19689
-        """
-        warnings.warn(
-            "Options.module_name has been deprecated in favor of model_name",
-            DeprecationWarning, stacklevel=2)
-        return self.model_name
 
     def _prepare(self, model):
         if self.order_with_respect_to:
@@ -444,45 +438,10 @@ class Options(object):
         for f, model in self.get_fields_with_model():
             cache[f.name] = cache[f.attname] = (f, model, True, False)
         for f in self.virtual_fields:
-            if hasattr(f, 'related'):
-                cache[f.name] = cache[f.attname] = (
-                    f.related, None if f.model == self.model else f.model, True, False)
+            cache[f.name] = (f, None if f.model == self.model else f.model, True, False)
         if apps.ready:
             self._name_map = cache
         return cache
-
-    def get_add_permission(self):
-        """
-        This method has been deprecated in favor of
-        `django.contrib.auth.get_permission_codename`. refs #20642
-        """
-        warnings.warn(
-            "`Options.get_add_permission` has been deprecated in favor "
-            "of `django.contrib.auth.get_permission_codename`.",
-            DeprecationWarning, stacklevel=2)
-        return 'add_%s' % self.model_name
-
-    def get_change_permission(self):
-        """
-        This method has been deprecated in favor of
-        `django.contrib.auth.get_permission_codename`. refs #20642
-        """
-        warnings.warn(
-            "`Options.get_change_permission` has been deprecated in favor "
-            "of `django.contrib.auth.get_permission_codename`.",
-            DeprecationWarning, stacklevel=2)
-        return 'change_%s' % self.model_name
-
-    def get_delete_permission(self):
-        """
-        This method has been deprecated in favor of
-        `django.contrib.auth.get_permission_codename`. refs #20642
-        """
-        warnings.warn(
-            "`Options.get_delete_permission` has been deprecated in favor "
-            "of `django.contrib.auth.get_permission_codename`.",
-            DeprecationWarning, stacklevel=2)
-        return 'delete_%s' % self.model_name
 
     def get_all_related_objects(self, local_only=False, include_hidden=False,
                                 include_proxy_eq=False):
@@ -525,8 +484,9 @@ class Options(object):
         proxy_cache = cache.copy()
         for klass in self.apps.get_models(include_auto_created=True):
             if not klass._meta.swapped:
-                for f in klass._meta.local_fields:
-                    if f.rel and not isinstance(f.rel.to, six.string_types) and f.generate_reverse_relation:
+                for f in klass._meta.local_fields + klass._meta.virtual_fields:
+                    if (hasattr(f, 'rel') and f.rel and not isinstance(f.rel.to, six.string_types)
+                            and f.generate_reverse_relation):
                         if self == f.rel.to._meta:
                             cache[f.related] = None
                             proxy_cache[f.related] = None

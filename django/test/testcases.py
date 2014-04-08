@@ -12,6 +12,7 @@ import socket
 import sys
 import threading
 import unittest
+import warnings
 from unittest import skipIf         # NOQA: Imported here for backward compatibility
 from unittest.util import safe_repr
 
@@ -33,6 +34,7 @@ from django.test.html import HTMLParseError, parse_html
 from django.test.signals import setting_changed, template_rendered
 from django.test.utils import (CaptureQueriesContext, ContextList,
     override_settings, modify_settings, compare_xml)
+from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_text
 from django.utils import six
 from django.utils.six.moves.urllib.parse import urlsplit, urlunsplit, urlparse, unquote
@@ -57,9 +59,6 @@ def to_list(value):
 
 real_commit = transaction.commit
 real_rollback = transaction.rollback
-real_enter_transaction_management = transaction.enter_transaction_management
-real_leave_transaction_management = transaction.leave_transaction_management
-real_abort = transaction.abort
 
 
 def nop(*args, **kwargs):
@@ -69,17 +68,11 @@ def nop(*args, **kwargs):
 def disable_transaction_methods():
     transaction.commit = nop
     transaction.rollback = nop
-    transaction.enter_transaction_management = nop
-    transaction.leave_transaction_management = nop
-    transaction.abort = nop
 
 
 def restore_transaction_methods():
     transaction.commit = real_commit
     transaction.rollback = real_rollback
-    transaction.enter_transaction_management = real_enter_transaction_management
-    transaction.leave_transaction_management = real_leave_transaction_management
-    transaction.abort = real_abort
 
 
 def assert_and_parse_html(self, html, user_msg, msg):
@@ -211,6 +204,11 @@ class SimpleTestCase(unittest.TestCase):
     def _urlconf_setup(self):
         set_urlconf(None)
         if hasattr(self, 'urls'):
+            warnings.warn(
+                "SimpleTestCase.urls is deprecated and will be removed in "
+                "Django 2.0. Use @override_settings(ROOT_URLCONF=...) "
+                "in %s instead." % self.__class__.__name__,
+                RemovedInDjango20Warning, stacklevel=2)
             self._old_root_urlconf = settings.ROOT_URLCONF
             settings.ROOT_URLCONF = self.urls
             clear_url_caches()
@@ -254,7 +252,7 @@ class SimpleTestCase(unittest.TestCase):
 
         Note that assertRedirects won't work for external links since it uses
         TestClient to do a request (use fetch_redirect_response=False to check
-        such links without fetching thtem).
+        such links without fetching them).
         """
         if msg_prefix:
             msg_prefix += ": "
@@ -762,7 +760,7 @@ class TransactionTestCase(SimpleTestCase):
         # including mirrors or not. Otherwise, just on the default DB.
         if getattr(self, 'multi_db', False):
             return [alias for alias in connections
-                    if include_mirrors or not connections[alias].settings_dict['TEST_MIRROR']]
+                    if include_mirrors or not connections[alias].settings_dict['TEST']['MIRROR']]
         else:
             return [DEFAULT_DB_ALIAS]
 
@@ -772,7 +770,7 @@ class TransactionTestCase(SimpleTestCase):
             sql_list = conn.ops.sequence_reset_by_name_sql(
                 no_style(), conn.introspection.sequence_list())
             if sql_list:
-                with transaction.commit_on_success_unless_managed(using=db_name):
+                with transaction.atomic(using=db_name):
                     cursor = conn.cursor()
                     for sql in sql_list:
                         cursor.execute(sql)
@@ -825,17 +823,17 @@ class TransactionTestCase(SimpleTestCase):
                          allow_cascade=self.available_apps is not None,
                          inhibit_post_migrate=self.available_apps is not None)
 
-    def assertQuerysetEqual(self, qs, values, transform=repr, ordered=True):
+    def assertQuerysetEqual(self, qs, values, transform=repr, ordered=True, msg=None):
         items = six.moves.map(transform, qs)
         if not ordered:
-            return self.assertEqual(set(items), set(values))
+            return self.assertEqual(set(items), set(values), msg=msg)
         values = list(values)
         # For example qs.iterator() could be passed as qs, but it does not
         # have 'ordered' attribute.
         if len(values) > 1 and hasattr(qs, 'ordered') and not qs.ordered:
             raise ValueError("Trying to compare non-ordered queryset "
                              "against more than one ordered values")
-        return self.assertEqual(list(items), values)
+        return self.assertEqual(list(items), values, msg=msg)
 
     def assertNumQueries(self, num, func=None, *args, **kwargs):
         using = kwargs.pop("using", DEFAULT_DB_ALIAS)
@@ -1182,7 +1180,7 @@ class LiveServerTestCase(TransactionTestCase):
             cls.server_thread.terminate()
             cls.server_thread.join()
 
-        # Restore sqlite connections' non-sharability
+        # Restore sqlite connections' non-shareability
         for conn in connections.all():
             if (conn.vendor == 'sqlite'
                     and conn.settings_dict['NAME'] == ':memory:'):

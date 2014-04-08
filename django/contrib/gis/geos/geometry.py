@@ -78,7 +78,7 @@ class GEOSGeometry(GEOSBase, ListMixin):
             else:
                 raise ValueError('String or unicode input unrecognized as WKT EWKT, and HEXEWKB.')
         elif isinstance(geo_input, GEOM_PTR):
-            # When the input is a pointer to a geomtry (GEOM_PTR).
+            # When the input is a pointer to a geometry (GEOM_PTR).
             g = geo_input
         elif isinstance(geo_input, memoryview):
             # When the input is a buffer (WKB).
@@ -577,15 +577,11 @@ class GEOSGeometry(GEOSBase, ListMixin):
     def interpolate(self, distance):
         if not isinstance(self, (LineString, MultiLineString)):
             raise TypeError('interpolate only works on LineString and MultiLineString geometries')
-        if not hasattr(capi, 'geos_interpolate'):
-            raise NotImplementedError('interpolate requires GEOS 3.2+')
         return self._topology(capi.geos_interpolate(self.ptr, distance))
 
     def interpolate_normalized(self, distance):
         if not isinstance(self, (LineString, MultiLineString)):
             raise TypeError('interpolate only works on LineString and MultiLineString geometries')
-        if not hasattr(capi, 'geos_interpolate_normalized'):
-            raise NotImplementedError('interpolate_normalized requires GEOS 3.2+')
         return self._topology(capi.geos_interpolate_normalized(self.ptr, distance))
 
     def intersection(self, other):
@@ -602,8 +598,6 @@ class GEOSGeometry(GEOSBase, ListMixin):
             raise TypeError('locate_point argument must be a Point')
         if not isinstance(self, (LineString, MultiLineString)):
             raise TypeError('locate_point only works on LineString and MultiLineString geometries')
-        if not hasattr(capi, 'geos_project'):
-            raise NotImplementedError('geos_project requires GEOS 3.2+')
         return capi.geos_project(self.ptr, point.ptr)
 
     def project_normalized(self, point):
@@ -611,8 +605,6 @@ class GEOSGeometry(GEOSBase, ListMixin):
             raise TypeError('locate_point argument must be a Point')
         if not isinstance(self, (LineString, MultiLineString)):
             raise TypeError('locate_point only works on LineString and MultiLineString geometries')
-        if not hasattr(capi, 'geos_project_normalized'):
-            raise NotImplementedError('project_normalized requires GEOS 3.2+')
         return capi.geos_project_normalized(self.ptr, point.ptr)
 
     def relate(self, other):
@@ -682,7 +674,7 @@ class GEOSGeometry(GEOSBase, ListMixin):
     def length(self):
         """
         Returns the length of this Geometry (e.g., 0 for point, or the
-        circumfrence of a Polygon).
+        circumference of a Polygon).
         """
         return capi.geos_length(self.ptr, byref(c_double()))
 

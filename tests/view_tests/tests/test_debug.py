@@ -30,9 +30,9 @@ from ..views import (sensitive_view, non_sensitive_view, paranoid_view,
     multivalue_dict_key_error)
 
 
-@override_settings(DEBUG=True, TEMPLATE_DEBUG=True)
+@override_settings(DEBUG=True, TEMPLATE_DEBUG=True,
+                   ROOT_URLCONF="view_tests.urls")
 class DebugViewTests(TestCase):
-    urls = "view_tests.urls"
 
     def test_files(self):
         response = self.client.get('/raises/')
@@ -68,6 +68,14 @@ class DebugViewTests(TestCase):
     def test_404(self):
         response = self.client.get('/raises404/')
         self.assertEqual(response.status_code, 404)
+
+    def test_raised_404(self):
+        response = self.client.get('/views/raises404/')
+        self.assertContains(response, "<code>not-in-urls</code>, didn't match", status_code=404)
+
+    def test_404_not_in_urls(self):
+        response = self.client.get('/not-in-urls')
+        self.assertContains(response, "<code>not-in-urls</code>, didn't match", status_code=404)
 
     def test_view_exceptions(self):
         for n in range(len(except_args)):
@@ -513,12 +521,12 @@ class ExceptionReportTestMixin(object):
                 self.assertNotIn(v, body)
 
 
+@override_settings(ROOT_URLCONF='view_tests.urls')
 class ExceptionReporterFilterTests(TestCase, ExceptionReportTestMixin):
     """
     Ensure that sensitive information can be filtered out of error reports.
     Refs #14614.
     """
-    urls = 'view_tests.urls'
     rf = RequestFactory()
 
     def test_non_sensitive_request(self):

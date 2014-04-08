@@ -33,6 +33,9 @@ TEST_DATA = (
     (validate_email, 'email@here.com', None),
     (validate_email, 'weirder-email@here.and.there.com', None),
     (validate_email, 'email@[127.0.0.1]', None),
+    (validate_email, 'email@[2001:dB8::1]', None),
+    (validate_email, 'email@[2001:dB8:0:0:0:0:0:1]', None),
+    (validate_email, 'email@[::fffF:127.0.0.1]', None),
     (validate_email, 'example@valid-----hyphens.com', None),
     (validate_email, 'example@valid-with-hyphens.com', None),
     (validate_email, 'test@domain.with.idn.tld.उदाहरण.परीक्षा', None),
@@ -49,6 +52,10 @@ TEST_DATA = (
     (validate_email, 'abc@.com', ValidationError),
     (validate_email, 'something@@somewhere.com', ValidationError),
     (validate_email, 'email@127.0.0.1', ValidationError),
+    (validate_email, 'email@[127.0.0.256]', ValidationError),
+    (validate_email, 'email@[2001:db8::12345]', ValidationError),
+    (validate_email, 'email@[2001:db8:0:0:0:0:1]', ValidationError),
+    (validate_email, 'email@[::ffff:127.0.0.256]', ValidationError),
     (validate_email, 'example@invalid-.com', ValidationError),
     (validate_email, 'example@-invalid.com', ValidationError),
     (validate_email, 'example@inv-.alid-.com', ValidationError),
@@ -187,6 +194,14 @@ TEST_DATA = (
 
     (RegexValidator('x'), 'y', ValidationError),
     (RegexValidator(re.compile('x')), 'y', ValidationError),
+    (RegexValidator('x', inverse_match=True), 'y', None),
+    (RegexValidator(re.compile('x'), inverse_match=True), 'y', None),
+    (RegexValidator('x', inverse_match=True), 'x', ValidationError),
+    (RegexValidator(re.compile('x'), inverse_match=True), 'x', ValidationError),
+
+    (RegexValidator('x', flags=re.IGNORECASE), 'y', ValidationError),
+    (RegexValidator('a'), 'A', ValidationError),
+    (RegexValidator('a', flags=re.IGNORECASE), 'A', None),
 )
 
 
@@ -238,6 +253,14 @@ class TestSimpleValidators(TestCase):
         v = ValidationError({'first': ['First Problem']})
         self.assertEqual(str(v), str_prefix("{%(_)s'first': [%(_)s'First Problem']}"))
         self.assertEqual(repr(v), str_prefix("ValidationError({%(_)s'first': [%(_)s'First Problem']})"))
+
+    def test_regex_validator_flags(self):
+        try:
+            RegexValidator(re.compile('a'), flags=re.IGNORECASE)
+        except TypeError:
+            pass
+        else:
+            self.fail("TypeError not raised when flags and pre-compiled regex in RegexValidator")
 
 test_counter = 0
 for validator, value, expected in TEST_DATA:

@@ -18,10 +18,10 @@ class IndexTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                '"index_together" must be a list or tuple.',
+                "'index_together' must be a list or tuple.",
                 hint=None,
                 obj=Model,
-                id='E006',
+                id='models.E008',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -34,10 +34,10 @@ class IndexTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                '"index_together" must be a list or tuple.',
+                "'index_together' must be a list or tuple.",
                 hint=None,
                 obj=Model,
-                id='E006',
+                id='models.E008',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -45,18 +45,15 @@ class IndexTogetherTests(IsolatedModelsTestCase):
     def test_list_containing_non_iterable(self):
         class Model(models.Model):
             class Meta:
-                index_together = [
-                    'non-iterable',
-                    'second-non-iterable',
-                ]
+                index_together = [('a', 'b'), 42]
 
         errors = Model.check()
         expected = [
             Error(
-                'All "index_together" elements must be lists or tuples.',
+                "All 'index_together' elements must be lists or tuples.",
                 hint=None,
                 obj=Model,
-                id='E007',
+                id='models.E009',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -71,10 +68,10 @@ class IndexTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                '"index_together" points to a missing field named "missing_field".',
-                hint='Ensure that you did not misspell the field name.',
+                "'index_together' refers to the non-existent field 'missing_field'.",
+                hint=None,
                 obj=Model,
-                id='E010',
+                id='models.E012',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -91,11 +88,11 @@ class IndexTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                ('"index_together" refers to a m2m "m2m" field, but '
-                 'ManyToManyFields are not supported in "index_together".'),
+                ("'index_together' refers to a ManyToManyField 'm2m', but "
+                 "ManyToManyFields are not permitted in 'index_together'."),
                 hint=None,
                 obj=Model,
-                id='E011',
+                id='models.E013',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -112,10 +109,10 @@ class UniqueTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                '"unique_together" must be a list or tuple.',
+                "'unique_together' must be a list or tuple.",
                 hint=None,
                 obj=Model,
-                id='E008',
+                id='models.E010',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -131,10 +128,26 @@ class UniqueTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                'All "unique_together" elements must be lists or tuples.',
+                "All 'unique_together' elements must be lists or tuples.",
                 hint=None,
                 obj=Model,
-                id='E009',
+                id='models.E011',
+            ),
+        ]
+        self.assertEqual(errors, expected)
+
+    def test_non_list(self):
+        class Model(models.Model):
+            class Meta:
+                unique_together = 'not-a-list'
+
+        errors = Model.check()
+        expected = [
+            Error(
+                "'unique_together' must be a list or tuple.",
+                hint=None,
+                obj=Model,
+                id='models.E010',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -161,10 +174,10 @@ class UniqueTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                '"unique_together" points to a missing field named "missing_field".',
-                hint='Ensure that you did not misspell the field name.',
+                "'unique_together' refers to the non-existent field 'missing_field'.",
+                hint=None,
                 obj=Model,
-                id='E010',
+                id='models.E012',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -181,41 +194,19 @@ class UniqueTogetherTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                ('"unique_together" refers to a m2m "m2m" field, but '
-                 'ManyToManyFields are not supported in "unique_together".'),
+                ("'unique_together' refers to a ManyToManyField 'm2m', but "
+                 "ManyToManyFields are not permitted in 'unique_together'."),
                 hint=None,
                 obj=Model,
-                id='E011',
+                id='models.E013',
             ),
         ]
         self.assertEqual(errors, expected)
 
 
-class OtherModelTests(IsolatedModelsTestCase):
+class FieldNamesTests(IsolatedModelsTestCase):
 
-    def test_unique_primary_key(self):
-        class Model(models.Model):
-            id = models.IntegerField(primary_key=False)
-
-        errors = Model.check()
-        expected = [
-            Error(
-                ('You cannot use "id" as a field name, because each model '
-                 'automatically gets an "id" field if none of the fields '
-                 'have primary_key=True.'),
-                hint='Remove or rename "id" field or add primary_key=True to a field.',
-                obj=Model,
-                id='E005',
-            ),
-            Error(
-                'Field "id" has column name "id" that is already used.',
-                hint=None,
-                obj=Model,
-            )
-        ]
-        self.assertEqual(errors, expected)
-
-    def test_field_names_ending_with_underscore(self):
+    def test_ending_with_underscore(self):
         class Model(models.Model):
             field_ = models.CharField(max_length=10)
             m2m_ = models.ManyToManyField('self')
@@ -223,16 +214,146 @@ class OtherModelTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                'Field names must not end with underscores.',
+                'Field names must not end with an underscore.',
                 hint=None,
                 obj=Model._meta.get_field('field_'),
-                id='E001',
+                id='fields.E001',
             ),
             Error(
-                'Field names must not end with underscores.',
+                'Field names must not end with an underscore.',
                 hint=None,
                 obj=Model._meta.get_field('m2m_'),
-                id='E001',
+                id='fields.E001',
+            ),
+        ]
+        self.assertEqual(errors, expected)
+
+    def test_including_separator(self):
+        class Model(models.Model):
+            some__field = models.IntegerField()
+
+        errors = Model.check()
+        expected = [
+            Error(
+                'Field names must not contain "__".',
+                hint=None,
+                obj=Model._meta.get_field('some__field'),
+                id='fields.E002',
+            )
+        ]
+        self.assertEqual(errors, expected)
+
+    def test_pk(self):
+        class Model(models.Model):
+            pk = models.IntegerField()
+
+        errors = Model.check()
+        expected = [
+            Error(
+                "'pk' is a reserved word that cannot be used as a field name.",
+                hint=None,
+                obj=Model._meta.get_field('pk'),
+                id='fields.E003',
+            )
+        ]
+        self.assertEqual(errors, expected)
+
+
+class ShadowingFieldsTests(IsolatedModelsTestCase):
+
+    def test_multiinheritance_clash(self):
+        class Mother(models.Model):
+            clash = models.IntegerField()
+
+        class Father(models.Model):
+            clash = models.IntegerField()
+
+        class Child(Mother, Father):
+            # Here we have two clashed: id (automatic field) and clash, because
+            # both parents define these fields.
+            pass
+
+        errors = Child.check()
+        expected = [
+            Error(
+                ("The field 'id' from parent model "
+                 "'invalid_models_tests.mother' clashes with the field 'id' "
+                 "from parent model 'invalid_models_tests.father'."),
+                hint=None,
+                obj=Child,
+                id='models.E005',
+            ),
+            Error(
+                ("The field 'clash' from parent model "
+                 "'invalid_models_tests.mother' clashes with the field 'clash' "
+                 "from parent model 'invalid_models_tests.father'."),
+                hint=None,
+                obj=Child,
+                id='models.E005',
+            )
+        ]
+        self.assertEqual(errors, expected)
+
+    def test_inheritance_clash(self):
+        class Parent(models.Model):
+            f_id = models.IntegerField()
+
+        class Target(models.Model):
+            # This field doesn't result in a clash.
+            f_id = models.IntegerField()
+
+        class Child(Parent):
+            # This field clashes with parent "f_id" field.
+            f = models.ForeignKey(Target)
+
+        errors = Child.check()
+        expected = [
+            Error(
+                ("The field 'f' clashes with the field 'f_id' "
+                 "from model 'invalid_models_tests.parent'."),
+                hint=None,
+                obj=Child._meta.get_field('f'),
+                id='models.E006',
+            )
+        ]
+        self.assertEqual(errors, expected)
+
+    def test_id_clash(self):
+        class Target(models.Model):
+            pass
+
+        class Model(models.Model):
+            fk = models.ForeignKey(Target)
+            fk_id = models.IntegerField()
+
+        errors = Model.check()
+        expected = [
+            Error(
+                ("The field 'fk_id' clashes with the field 'fk' from model "
+                 "'invalid_models_tests.model'."),
+                hint=None,
+                obj=Model._meta.get_field('fk_id'),
+                id='models.E006',
+            )
+        ]
+        self.assertEqual(errors, expected)
+
+
+class OtherModelTests(IsolatedModelsTestCase):
+
+    def test_unique_primary_key(self):
+        invalid_id = models.IntegerField(primary_key=False)
+
+        class Model(models.Model):
+            id = invalid_id
+
+        errors = Model.check()
+        expected = [
+            Error(
+                "'id' can only be used as a field name if the field also sets 'primary_key=True'.",
+                hint=None,
+                obj=Model,
+                id='models.E004',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -245,11 +366,11 @@ class OtherModelTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                ('"ordering" must be a tuple or list '
-                 '(even if you want to order by only one field).'),
+                ("'ordering' must be a tuple or list "
+                 "(even if you want to order by only one field)."),
                 hint=None,
                 obj=Model,
-                id='E012',
+                id='models.E014',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -262,10 +383,10 @@ class OtherModelTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                '"ordering" pointing to a missing "missing_field" field.',
-                hint='Ensure that you did not misspell the field name.',
+                "'ordering' refers to the non-existent field 'missing_field'.",
+                hint=None,
                 obj=Model,
-                id='E013',
+                id='models.E015',
             )
         ]
         self.assertEqual(errors, expected)
@@ -279,10 +400,10 @@ class OtherModelTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                '"TEST_SWAPPED_MODEL_BAD_VALUE" is not of the form "app_label.app_name".',
+                "'TEST_SWAPPED_MODEL_BAD_VALUE' is not of the form 'app_label.app_name'.",
                 hint=None,
-                obj=Model,
-                id='E002',
+                obj=None,
+                id='models.E001',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -296,13 +417,11 @@ class OtherModelTests(IsolatedModelsTestCase):
         errors = Model.check()
         expected = [
             Error(
-                ('The model has been swapped out for not_an_app.Target '
-                 'which has not been installed or is abstract.'),
-                hint=('Ensure that you did not misspell the model name and '
-                      'the app name as well as the model is not abstract. Does '
-                      'your INSTALLED_APPS setting contain the "not_an_app" app?'),
-                obj=Model,
-                id='E003',
+                ("'TEST_SWAPPED_MODEL_BAD_MODEL' references 'not_an_app.Target', "
+                 'which has not been installed, or is abstract.'),
+                hint=None,
+                obj=None,
+                id='models.E002',
             ),
         ]
         self.assertEqual(errors, expected)
@@ -324,11 +443,11 @@ class OtherModelTests(IsolatedModelsTestCase):
         errors = Group.check()
         expected = [
             Error(
-                ('The model has two many-to-many relations through '
-                 'the intermediary Membership model, which is not permitted.'),
+                ("The model has two many-to-many relations through "
+                 "the intermediate model 'invalid_models_tests.Membership'."),
                 hint=None,
                 obj=Group,
-                id='E004',
+                id='models.E003',
             )
         ]
         self.assertEqual(errors, expected)

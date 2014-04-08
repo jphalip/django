@@ -17,11 +17,14 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.utils.encoding import force_text
 from django.utils.functional import empty
-from django.utils._os import rmtree_errorhandler, upath
+from django.utils._os import rmtree_errorhandler, upath, symlinks_supported
 from django.utils import six
 
 from django.contrib.staticfiles import finders, storage
 from django.contrib.staticfiles.management.commands import collectstatic
+
+from .storage import DummyStorage
+
 
 TEST_ROOT = os.path.dirname(upath(__file__))
 TEST_SETTINGS = {
@@ -223,6 +226,35 @@ class TestFindStatic(CollectionTestCase, TestDefaults):
         self.assertIn('project', force_text(lines[0]))
         self.assertIn('apps', force_text(lines[1]))
 
+    def test_all_files_more_verbose(self):
+        """
+        Test that findstatic returns all candidate files if run without --first and -v2.
+        Also, test that findstatic returns the searched locations with -v2.
+        """
+        out = six.StringIO()
+        call_command('findstatic', 'test/file.txt', verbosity=2, stdout=out)
+        out.seek(0)
+        lines = [l.strip() for l in out.readlines()]
+        self.assertIn('project', force_text(lines[1]))
+        self.assertIn('apps', force_text(lines[2]))
+        self.assertIn("Looking in the following locations:", force_text(lines[3]))
+        searched_locations = ', '.join(lines[4:])
+        # AppDirectoriesFinder searched locations
+        self.assertIn(os.path.join('staticfiles_tests', 'apps', 'test', 'static'),
+                      searched_locations)
+        self.assertIn(os.path.join('staticfiles_tests', 'apps', 'no_label', 'static'),
+                      searched_locations)
+        self.assertIn(os.path.join('django', 'contrib', 'admin', 'static'),
+                      searched_locations)
+        self.assertIn(os.path.join('tests', 'servers', 'another_app', 'static'),
+                      searched_locations)
+        # FileSystemFinder searched locations
+        self.assertIn(TEST_SETTINGS['STATICFILES_DIRS'][1][1], searched_locations)
+        self.assertIn(TEST_SETTINGS['STATICFILES_DIRS'][0], searched_locations)
+        # DefaultStorageFinder searched locations
+        self.assertIn(os.path.join('staticfiles_tests', 'project', 'site_media', 'media'),
+                      searched_locations)
+
 
 class TestConfiguration(StaticFilesTestCase):
     def test_location_empty(self):
@@ -233,6 +265,29 @@ class TestConfiguration(StaticFilesTestCase):
                         self, ImproperlyConfigured,
                         'without having set the STATIC_ROOT setting to a filesystem path'):
                     call_command('collectstatic', interactive=False, verbosity=0, stderr=err)
+
+    def test_local_storage_detection_helper(self):
+        staticfiles_storage = storage.staticfiles_storage
+        try:
+            storage.staticfiles_storage._wrapped = empty
+            with override_settings(STATICFILES_STORAGE='django.contrib.staticfiles.storage.StaticFilesStorage'):
+                command = collectstatic.Command()
+                self.assertTrue(command.is_local_storage())
+
+            storage.staticfiles_storage._wrapped = empty
+            with override_settings(STATICFILES_STORAGE='staticfiles_tests.storage.DummyStorage'):
+                command = collectstatic.Command()
+                self.assertFalse(command.is_local_storage())
+
+            storage.staticfiles_storage = storage.FileSystemStorage()
+            command = collectstatic.Command()
+            self.assertTrue(command.is_local_storage())
+
+            storage.staticfiles_storage = DummyStorage()
+            command = collectstatic.Command()
+            self.assertFalse(command.is_local_storage())
+        finally:
+            storage.staticfiles_storage = staticfiles_storage
 
 
 class TestCollection(CollectionTestCase, TestDefaults):
@@ -607,6 +662,11 @@ class TestCollectionManifestStorage(TestHashedFiles, BaseCollectionTestCase,
                       storage.staticfiles_storage.manifest_version,
                       force_text(manifest_content))
 
+    def test_parse_cache(self):
+        hashed_files = storage.staticfiles_storage.hashed_files
+        manifest = storage.staticfiles_storage.load_manifest()
+        self.assertEqual(hashed_files, manifest)
+
 
 # we set DEBUG to False here since the template tag wouldn't work otherwise
 @override_settings(**dict(
@@ -645,31 +705,41 @@ class TestCollectionSimpleCachedStorage(BaseCollectionTestCase,
             self.assertNotIn(b"cached/other.css", content)
             self.assertIn(b"other.deploy12345.css", content)
 
-if sys.platform != 'win32':
 
-    class TestCollectionLinks(CollectionTestCase, TestDefaults):
+@unittest.skipUnless(symlinks_supported(),
+                     "Must be able to symlink to run this test.")
+class TestCollectionLinks(CollectionTestCase, TestDefaults):
+    """
+    Test ``--link`` option for ``collectstatic`` management command.
+
+    Note that by inheriting ``TestDefaults`` we repeat all
+    the standard file resolving tests here, to make sure using
+    ``--link`` does not change the file-selection semantics.
+    """
+    def run_collectstatic(self):
+        super(TestCollectionLinks, self).run_collectstatic(link=True)
+
+    def test_links_created(self):
         """
-        Test ``--link`` option for ``collectstatic`` management command.
-
-        Note that by inheriting ``TestDefaults`` we repeat all
-        the standard file resolving tests here, to make sure using
-        ``--link`` does not change the file-selection semantics.
+        With ``--link``, symbolic links are created.
         """
-        def run_collectstatic(self):
-            super(TestCollectionLinks, self).run_collectstatic(link=True)
+        self.assertTrue(os.path.islink(os.path.join(settings.STATIC_ROOT, 'test.txt')))
 
-        def test_links_created(self):
-            """
-            With ``--link``, symbolic links are created.
-            """
-            self.assertTrue(os.path.islink(os.path.join(settings.STATIC_ROOT, 'test.txt')))
+    def test_broken_symlink(self):
+        """
+        Test broken symlink gets deleted.
+        """
+        path = os.path.join(settings.STATIC_ROOT, 'test.txt')
+        os.unlink(path)
+        self.run_collectstatic()
+        self.assertTrue(os.path.islink(path))
 
 
+@override_settings(ROOT_URLCONF='staticfiles_tests.urls.default')
 class TestServeStatic(StaticFilesTestCase):
     """
     Test static asset serving view.
     """
-    urls = 'staticfiles_tests.urls.default'
 
     def _response(self, filepath):
         return self.client.get(
@@ -701,11 +771,11 @@ class TestServeStaticWithDefaultURL(TestServeStatic, TestDefaults):
     pass
 
 
+@override_settings(ROOT_URLCONF='staticfiles_tests.urls.helper')
 class TestServeStaticWithURLHelper(TestServeStatic, TestDefaults):
     """
     Test static asset serving view with staticfiles_urlpatterns helper.
     """
-    urls = 'staticfiles_tests.urls.helper'
 
 
 class TestServeAdminMedia(TestServeStatic):
@@ -778,6 +848,9 @@ class TestDefaultStorageFinder(StaticFilesTestCase, FinderTestCase):
         self.find_all = ('media-file.txt', [test_file_path])
 
 
+@override_settings(STATICFILES_FINDERS=
+                   ('django.contrib.staticfiles.finders.FileSystemFinder',),
+                   STATICFILES_DIRS=[os.path.join(TEST_ROOT, 'project', 'documents')])
 class TestMiscFinder(TestCase):
     """
     A few misc finder tests.
@@ -788,11 +861,11 @@ class TestMiscFinder(TestCase):
             finders.FileSystemFinder)
 
     def test_get_finder_bad_classname(self):
-        self.assertRaises(ImproperlyConfigured, finders.get_finder,
+        self.assertRaises(ImportError, finders.get_finder,
                           'django.contrib.staticfiles.finders.FooBarFinder')
 
     def test_get_finder_bad_module(self):
-        self.assertRaises(ImproperlyConfigured,
+        self.assertRaises(ImportError,
             finders.get_finder, 'foo.bar.FooBarFinder')
 
     def test_cache(self):
@@ -803,6 +876,11 @@ class TestMiscFinder(TestCase):
         cache_info = finders.get_finder.cache_info()
         self.assertEqual(cache_info.hits, 9)
         self.assertEqual(cache_info.currsize, 1)
+
+    def test_searched_locations(self):
+        finders.find('spam')
+        self.assertEqual(finders.searched_locations,
+                         [os.path.join(TEST_ROOT, 'project', 'documents')])
 
     @override_settings(STATICFILES_DIRS='a string')
     def test_non_tuple_raises_exception(self):
