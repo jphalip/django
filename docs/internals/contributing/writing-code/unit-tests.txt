@@ -169,12 +169,12 @@ ________
 You may also run the Selenium tests on the `Sauce Labs`_ platform, which allows
 using a wide range of browsers and operating systems.
 
-First, you need to download `Sauce Connect`_ and then run it with Java as
-follows:
+First, you need to download `Sauce Connect`_, extract it, go to its directory
+and run the following command:
 
 .. code-block:: bash
 
-    java -jar Sauce-Connect.jar djangoproject 195429ab-c384-40dc-b9dd-63ca850b53c6
+    bin/sc -u djangoproject -k 195429ab-c384-40dc-b9dd-63ca850b53c6
 
 Then you need to use the ``--selenium-remote`` option and set the
 ``REMOTE_USER`` and ``REMOTE_USER`` environment variables. The ``--selenium``
@@ -220,7 +220,7 @@ For the full list of possible browser/OS combinations, please refer to
 the `dedicated page on Sauce Labs`_.
 
 .. _`Sauce Labs`: https://saucelabs.com
-.. _`Sauce Connect`: https://saucelabs.com/docs/connect
+.. _`Sauce Connect`: https://docs.saucelabs.com/reference/sauce-connect/
 .. _`dedicated page on Sauce Labs`: https://saucelabs.com/docs/platforms
 
 .. _running-unit-tests-dependencies:
