@@ -1,6 +1,5 @@
 import re
 import base64
-import httplib
 import json
 import os
 import sys
@@ -10,6 +9,7 @@ from unittest import SkipTest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.utils.module_loading import import_string
 from django.utils.translation import ugettext as _
+from django.utils import six
 
 
 class AdminSeleniumMetaClass(type):
@@ -165,7 +165,7 @@ class AdminSeleniumWebDriverTestCase(StaticLiveServerTestCase):
             '%s:%s' % (os.environ.get('REMOTE_USER'), os.environ.get('REMOTE_KEY')))[:-1]
         result = json.dumps({'passed': sys.exc_info() == (None, None, None)})
         url = '/rest/v1/%s/jobs/%s' % (os.environ.get('REMOTE_USER'), self.selenium.session_id)
-        connection = httplib.HTTPConnection('saucelabs.com')
+        connection = six.moves.http_client.HTTPConnection('saucelabs.com')
         connection.request(
             'PUT', url, result, headers={"Authorization": 'Basic %s' % base64string})
         result = connection.getresponse()
