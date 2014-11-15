@@ -25,7 +25,10 @@ def get_backends():
     for backend_path in settings.AUTHENTICATION_BACKENDS:
         backends.append(load_backend(backend_path))
     if not backends:
-        raise ImproperlyConfigured('No authentication backends have been defined. Does AUTHENTICATION_BACKENDS contain anything?')
+        raise ImproperlyConfigured(
+            'No authentication backends have been defined. Does '
+            'AUTHENTICATION_BACKENDS contain anything?'
+        )
     return backends
 
 
@@ -86,7 +89,7 @@ def login(request, user):
     if SESSION_KEY in request.session:
         if request.session[SESSION_KEY] != user.pk or (
                 session_auth_hash and
-                request.session[HASH_SESSION_KEY] != session_auth_hash):
+                request.session.get(HASH_SESSION_KEY) != session_auth_hash):
             # To avoid reusing another user's session, create a new, empty
             # session if the existing session corresponds to a different
             # authenticated user.
@@ -136,7 +139,9 @@ def get_user_model():
     except ValueError:
         raise ImproperlyConfigured("AUTH_USER_MODEL must be of the form 'app_label.model_name'")
     except LookupError:
-        raise ImproperlyConfigured("AUTH_USER_MODEL refers to model '%s' that has not been installed" % settings.AUTH_USER_MODEL)
+        raise ImproperlyConfigured(
+            "AUTH_USER_MODEL refers to model '%s' that has not been installed" % settings.AUTH_USER_MODEL
+        )
 
 
 def get_user(request):

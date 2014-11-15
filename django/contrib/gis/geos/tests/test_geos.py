@@ -10,7 +10,6 @@ from io import BytesIO
 
 from django.contrib.gis.gdal import HAS_GDAL
 
-from django.contrib.gis import memoryview
 from django.contrib.gis.geometry.test_data import TestDataMixin
 
 from django.utils.encoding import force_bytes
@@ -110,8 +109,8 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
         self.assertEqual(True, GEOSGeometry(hexewkb_3d).hasz)
 
         # Same for EWKB.
-        self.assertEqual(memoryview(a2b_hex(hexewkb_2d)), pnt_2d.ewkb)
-        self.assertEqual(memoryview(a2b_hex(hexewkb_3d)), pnt_3d.ewkb)
+        self.assertEqual(six.memoryview(a2b_hex(hexewkb_2d)), pnt_2d.ewkb)
+        self.assertEqual(six.memoryview(a2b_hex(hexewkb_3d)), pnt_3d.ewkb)
 
         # Redundant sanity check.
         self.assertEqual(4326, GEOSGeometry(hexewkb_2d).srid)
@@ -132,7 +131,7 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
                 fromstr(err.wkt)
 
         # Bad WKB
-        self.assertRaises(GEOSException, GEOSGeometry, memoryview(b'0'))
+        self.assertRaises(GEOSException, GEOSGeometry, six.memoryview(b'0'))
 
         class NotAGeometry(object):
             pass
@@ -160,7 +159,7 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
     def test_create_wkb(self):
         "Testing creation from WKB."
         for g in self.geometries.hex_wkt:
-            wkb = memoryview(a2b_hex(g.hex.encode()))
+            wkb = six.memoryview(a2b_hex(g.hex.encode()))
             geom_h = GEOSGeometry(wkb)
             # we need to do this so decimal places get normalized
             geom_t = fromstr(g.wkt)
@@ -316,7 +315,8 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
             self.assertEqual(ls, LineString(ls.tuple))  # tuple
             self.assertEqual(ls, LineString(*ls.tuple))  # as individual arguments
             self.assertEqual(ls, LineString([list(tup) for tup in ls.tuple]))  # as list
-            self.assertEqual(ls.wkt, LineString(*tuple(Point(tup) for tup in ls.tuple)).wkt)  # Point individual arguments
+            # Point individual arguments
+            self.assertEqual(ls.wkt, LineString(*tuple(Point(tup) for tup in ls.tuple)).wkt)
             if numpy:
                 self.assertEqual(ls, LineString(numpy.array(ls.tuple)))  # as numpy array
 
@@ -436,17 +436,13 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
     def test_polygon_comparison(self):
         p1 = Polygon(((0, 0), (0, 1), (1, 1), (1, 0), (0, 0)))
         p2 = Polygon(((0, 0), (0, 1), (1, 0), (0, 0)))
-        self.assertTrue(p1 > p2)
-        self.assertFalse(p1 < p2)
-        self.assertFalse(p2 > p1)
-        self.assertTrue(p2 < p1)
+        self.assertGreater(p1, p2)
+        self.assertLess(p2, p1)
 
         p3 = Polygon(((0, 0), (0, 1), (1, 1), (2, 0), (0, 0)))
         p4 = Polygon(((0, 0), (0, 1), (2, 2), (1, 0), (0, 0)))
-        self.assertFalse(p4 < p3)
-        self.assertTrue(p3 < p4)
-        self.assertTrue(p4 > p3)
-        self.assertFalse(p3 > p4)
+        self.assertGreater(p4, p3)
+        self.assertLess(p3, p4)
 
     def test_multipolygons(self):
         "Testing MultiPolygon objects."
@@ -653,7 +649,10 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
 
         # Test conversion from custom to a known srid
         c2w = gdal.CoordTransform(
-            gdal.SpatialReference('+proj=mill +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R_A +ellps=WGS84 +datum=WGS84 +units=m +no_defs'),
+            gdal.SpatialReference(
+                '+proj=mill +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R_A +ellps=WGS84 '
+                '+datum=WGS84 +units=m +no_defs'
+            ),
             gdal.SpatialReference(4326))
         new_pnt = pnt.transform(c2w, clone=True)
         self.assertEqual(new_pnt.srid, 4326)
@@ -908,7 +907,7 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
             g1 = g.transform(4326, clone=True)
             self.assertEqual(g1.tuple, g.tuple)
             self.assertEqual(g1.srid, 4326)
-            self.assertTrue(g1 is not g, "Clone didn't happen")
+            self.assertIsNot(g1, g, "Clone didn't happen")
 
         old_has_gdal = gdal.HAS_GDAL
         try:
@@ -924,7 +923,7 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
             g1 = g.transform(4326, clone=True)
             self.assertEqual(g1.tuple, g.tuple)
             self.assertEqual(g1.srid, 4326)
-            self.assertTrue(g1 is not g, "Clone didn't happen")
+            self.assertIsNot(g1, g, "Clone didn't happen")
         finally:
             gdal.HAS_GDAL = old_has_gdal
 
@@ -987,7 +986,7 @@ class GEOSTest(unittest.TestCase, TestDataMixin):
         tgeoms = get_geoms(self.geometries.points)
         tgeoms.extend(get_geoms(self.geometries.multilinestrings, 4326))
         tgeoms.extend(get_geoms(self.geometries.polygons, 3084))
-        tgeoms.extend(get_geoms(self.geometries.multipolygons, 900913))
+        tgeoms.extend(get_geoms(self.geometries.multipolygons, 3857))
 
         for geom in tgeoms:
             s1, s2 = cPickle.dumps(geom), pickle.dumps(geom)

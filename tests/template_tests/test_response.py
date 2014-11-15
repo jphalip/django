@@ -167,7 +167,7 @@ class SimpleTemplateResponseTest(TestCase):
         self.assertEqual(unpickled_response['content-type'], response['content-type'])
         self.assertEqual(unpickled_response.status_code, response.status_code)
 
-        # ...and the unpickled reponse doesn't have the
+        # ...and the unpickled response doesn't have the
         # template-related attributes, so it can't be re-rendered
         template_attrs = ('template_name', 'context_data', '_post_render_callbacks')
         for attr in template_attrs:
@@ -233,6 +233,12 @@ class TemplateResponseTest(TestCase):
                                   Context({'foo': 'bar'})).render()
         self.assertEqual(response.content, b'bar')
 
+    def test_context_processor_priority(self):
+        # context processors should be overridden by passed-in context
+        response = self._response('{{ foo }}{{ processors }}',
+                                  {'processors': 'no'}).render()
+        self.assertEqual(response.content, b'no')
+
     def test_kwargs(self):
         response = self._response(content_type='application/json',
                                   status=504)
@@ -273,7 +279,7 @@ class TemplateResponseTest(TestCase):
         self.assertEqual(unpickled_response['content-type'], response['content-type'])
         self.assertEqual(unpickled_response.status_code, response.status_code)
 
-        # ...and the unpickled reponse doesn't have the
+        # ...and the unpickled response doesn't have the
         # template-related attributes, so it can't be re-rendered
         template_attrs = ('template_name', 'context_data',
             '_post_render_callbacks', '_request', '_current_app')

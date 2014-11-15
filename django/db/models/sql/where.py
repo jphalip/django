@@ -66,7 +66,7 @@ class WhereNode(tree.Node):
             # emptiness and transform any non-empty values correctly.
             value = list(value)
 
-        # The "value_annotation" parameter is used to pass auxilliary information
+        # The "value_annotation" parameter is used to pass auxiliary information
         # about the value(s) to the query construction. Specifically, datetime
         # and empty values need special handling. Other types could be used
         # here in the future (using Python types is suggested for consistency).
@@ -418,7 +418,9 @@ class SubqueryConstraint(object):
             else:
                 query = query._clone()
             query = query.query
-            query.clear_ordering(True)
+            if query.can_filter():
+                # If there is no slicing in use, then we can safely drop all ordering
+                query.clear_ordering(True)
 
         query_compiler = query.get_compiler(connection=connection)
         return query_compiler.as_subquery_condition(self.alias, self.columns, qn)

@@ -80,6 +80,14 @@ class ErrorList(UserList, list):
     """
     A collection of errors that knows how to display itself in various formats.
     """
+    def __init__(self, initlist=None, error_class=None):
+        super(ErrorList, self).__init__(initlist)
+
+        if error_class is None:
+            self.error_class = 'errorlist'
+        else:
+            self.error_class = 'errorlist {}'.format(error_class)
+
     def as_data(self):
         return ValidationError(self.data).error_list
 
@@ -99,8 +107,10 @@ class ErrorList(UserList, list):
     def as_ul(self):
         if not self.data:
             return ''
+
         return format_html(
-            '<ul class="errorlist">{0}</ul>',
+            '<ul class="{0}">{1}</ul>',
+            self.error_class,
             format_html_join('', '<li>{0}</li>', ((force_text(e),) for e in self))
         )
 
@@ -127,6 +137,15 @@ class ErrorList(UserList, list):
         if isinstance(error, ValidationError):
             return list(error)[0]
         return force_text(error)
+
+    def __reduce_ex__(self, *args, **kwargs):
+        # The `list` reduce function returns an iterator as the fourth element
+        # that is normally used for repopulating. Since we only inherit from
+        # `list` for `isinstance` backward compatibility (Refs #17413) we
+        # nullify this iterator as it would otherwise result in duplicate
+        # entries. (Refs #23594)
+        info = super(UserList, self).__reduce_ex__(*args, **kwargs)
+        return info[:3] + (None, None)
 
 
 # Utilities for time zone support in DateTimeField et al.

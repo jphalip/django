@@ -3,15 +3,15 @@ Tests for django test runner
 """
 from __future__ import unicode_literals
 
-from optparse import make_option
 import unittest
 
+from django import db
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
-from django import db
+from django.db.backends.dummy.base import DatabaseCreation
 from django.test import runner, TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.test.testcases import connections_support_transactions
-from django.test.utils import override_system_checks
 from django.utils import six
 
 from admin_scripts.tests import AdminScriptTestCase
@@ -152,11 +152,6 @@ class ManageCommandTests(unittest.TestCase):
 
 
 class CustomOptionsTestRunner(runner.DiscoverRunner):
-    option_list = (
-        make_option('--option_a', '-a', action='store', dest='option_a', default='1'),
-        make_option('--option_b', '-b', action='store', dest='option_b', default='2'),
-        make_option('--option_c', '-c', action='store', dest='option_c', default='3'),
-    )
 
     def __init__(self, verbosity=1, interactive=True, failfast=True, option_a=None, option_b=None, option_c=None, **kwargs):
         super(CustomOptionsTestRunner, self).__init__(verbosity=verbosity, interactive=interactive,
@@ -164,6 +159,12 @@ class CustomOptionsTestRunner(runner.DiscoverRunner):
         self.option_a = option_a
         self.option_b = option_b
         self.option_c = option_c
+
+    @classmethod
+    def add_arguments(cls, parser):
+        parser.add_argument('--option_a', '-a', action='store', dest='option_a', default='1'),
+        parser.add_argument('--option_b', '-b', action='store', dest='option_b', default='2'),
+        parser.add_argument('--option_c', '-c', action='store', dest='option_c', default='3'),
 
     def run_tests(self, test_labels, extra_tests=None, **kwargs):
         print("%s:%s:%s" % (self.option_a, self.option_b, self.option_c))
@@ -224,9 +225,6 @@ class Sqlite3InMemoryTestDbs(TestCase):
 
     available_apps = []
 
-    # `setup_databases` triggers system check framework, but we do not want to
-    # perform checks.
-    @override_system_checks([])
     @unittest.skipUnless(all(db.connections[conn].vendor == 'sqlite' for conn in db.connections),
                          "This is an sqlite-specific issue")
     def test_transaction_support(self):
@@ -299,38 +297,84 @@ class AliasedDefaultTestSetupTest(unittest.TestCase):
             db.connections = old_db_connections
 
 
-class AliasedDatabaseTeardownTest(unittest.TestCase):
+class SetupDatabasesTests(unittest.TestCase):
+
+    def setUp(self):
+        self._old_db_connections = db.connections
+        self._old_destroy_test_db = DatabaseCreation.destroy_test_db
+        self._old_create_test_db = DatabaseCreation.create_test_db
+        self.runner_instance = runner.DiscoverRunner(verbosity=0)
+
+    def tearDown(self):
+        DatabaseCreation.create_test_db = self._old_create_test_db
+        DatabaseCreation.destroy_test_db = self._old_destroy_test_db
+        db.connections = self._old_db_connections
+
     def test_setup_aliased_databases(self):
-        from django.db.backends.dummy.base import DatabaseCreation
+        destroyed_names = []
+        DatabaseCreation.destroy_test_db = (
+            lambda self, old_database_name, verbosity=1, keepdb=False, serialize=True:
+            destroyed_names.append(old_database_name)
+        )
+        DatabaseCreation.create_test_db = (
+            lambda self, verbosity=1, autoclobber=False, keepdb=False, serialize=True:
+            self._get_test_db_name()
+        )
 
-        runner_instance = runner.DiscoverRunner(verbosity=0)
-        old_db_connections = db.connections
-        old_destroy_test_db = DatabaseCreation.destroy_test_db
-        old_create_test_db = DatabaseCreation.create_test_db
-        try:
-            destroyed_names = []
-            DatabaseCreation.destroy_test_db = lambda self, old_database_name, verbosity=1: destroyed_names.append(old_database_name)
-            DatabaseCreation.create_test_db = lambda self, verbosity=1, autoclobber=False: self._get_test_db_name()
+        db.connections = db.ConnectionHandler({
+            'default': {
+                'ENGINE': 'django.db.backends.dummy',
+                'NAME': 'dbname',
+            },
+            'other': {
+                'ENGINE': 'django.db.backends.dummy',
+                'NAME': 'dbname',
+            }
+        })
 
-            db.connections = db.ConnectionHandler({
-                'default': {
-                    'ENGINE': 'django.db.backends.dummy',
-                    'NAME': 'dbname',
-                },
-                'other': {
-                    'ENGINE': 'django.db.backends.dummy',
-                    'NAME': 'dbname',
-                }
-            })
+        old_config = self.runner_instance.setup_databases()
+        self.runner_instance.teardown_databases(old_config)
 
-            old_config = runner_instance.setup_databases()
-            runner_instance.teardown_databases(old_config)
+        self.assertEqual(destroyed_names.count('dbname'), 1)
 
-            self.assertEqual(destroyed_names.count('dbname'), 1)
-        finally:
-            DatabaseCreation.create_test_db = old_create_test_db
-            DatabaseCreation.destroy_test_db = old_destroy_test_db
-            db.connections = old_db_connections
+    def test_destroy_test_db_restores_db_name(self):
+        db.connections = db.ConnectionHandler({
+            'default': {
+                'ENGINE': settings.DATABASES[db.DEFAULT_DB_ALIAS]["ENGINE"],
+                'NAME': 'xxx_test_database',
+            },
+        })
+        # Using the real current name as old_name to not mess with the test suite.
+        old_name = settings.DATABASES[db.DEFAULT_DB_ALIAS]["NAME"]
+        db.connections['default'].creation.destroy_test_db(old_name, verbosity=0, keepdb=True)
+        self.assertEqual(db.connections['default'].settings_dict["NAME"], old_name)
+
+    def test_serialization(self):
+        serialize = []
+        DatabaseCreation.create_test_db = (
+            lambda *args, **kwargs: serialize.append(kwargs.get('serialize'))
+        )
+        db.connections = db.ConnectionHandler({
+            'default': {
+                'ENGINE': 'django.db.backends.dummy',
+            },
+        })
+        self.runner_instance.setup_databases()
+        self.assertEqual(serialize, [True])
+
+    def test_serialized_off(self):
+        serialize = []
+        DatabaseCreation.create_test_db = (
+            lambda *args, **kwargs: serialize.append(kwargs.get('serialize'))
+        )
+        db.connections = db.ConnectionHandler({
+            'default': {
+                'ENGINE': 'django.db.backends.dummy',
+                'TEST': {'SERIALIZE': False},
+            },
+        })
+        self.runner_instance.setup_databases()
+        self.assertEqual(serialize, [False])
 
 
 class DeprecationDisplayTest(AdminScriptTestCase):
@@ -355,7 +399,7 @@ class DeprecationDisplayTest(AdminScriptTestCase):
         args = ['test', '--settings=test_project.settings', '--verbosity=0', 'test_runner_deprecation_app']
         out, err = self.run_django_admin(args)
         self.assertIn("Ran 1 test", err)
-        self.assertFalse("warning from test" in err)
+        self.assertNotIn("warning from test", err)
 
 
 class AutoIncrementResetTest(TransactionTestCase):

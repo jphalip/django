@@ -3,7 +3,16 @@ from __future__ import unicode_literals
 
 from django.apps.registry import Apps
 from django.db import models
+from django.utils import six
 from django.utils.encoding import python_2_unicode_compatible
+
+
+class CustomModelBase(models.base.ModelBase):
+    pass
+
+
+class ModelWithCustomBase(six.with_metaclass(CustomModelBase, models.Model)):
+    pass
 
 
 @python_2_unicode_compatible
@@ -33,3 +42,11 @@ class UnserializableModel(models.Model):
     class Meta:
         # Disable auto loading of this model as we load it on our own
         apps = Apps()
+
+
+class UnmigratedModel(models.Model):
+    """
+    A model that is in a migration-less app (which this app is
+    if its migrations directory has not been repointed)
+    """
+    pass

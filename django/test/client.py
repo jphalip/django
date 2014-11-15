@@ -10,20 +10,21 @@ from io import BytesIO
 
 from django.apps import apps
 from django.conf import settings
+from django.core import urlresolvers
 from django.core.handlers.base import BaseHandler
-from django.core.handlers.wsgi import WSGIRequest
+from django.core.handlers.wsgi import WSGIRequest, ISO_8859_1, UTF_8
 from django.core.signals import (request_started, request_finished,
     got_request_exception)
 from django.db import close_old_connections
-from django.http import SimpleCookie, QueryDict
+from django.http import SimpleCookie, HttpRequest, QueryDict
 from django.template import TemplateDoesNotExist
 from django.test import signals
-from django.utils.functional import curry
-from django.utils.encoding import force_bytes, force_str
+from django.utils.functional import curry, SimpleLazyObject
+from django.utils.encoding import force_bytes, force_str, uri_to_iri
 from django.utils.http import urlencode
 from django.utils.itercompat import is_iterable
 from django.utils import six
-from django.utils.six.moves.urllib.parse import unquote, urlparse, urlsplit
+from django.utils.six.moves.urllib.parse import urlparse, urlsplit
 from django.test.utils import ContextList
 
 __all__ = ('Client', 'RequestFactory', 'encode_file', 'encode_multipart')
@@ -97,7 +98,7 @@ class ClientHandler(BaseHandler):
             self.load_middleware()
 
         request_started.disconnect(close_old_connections)
-        request_started.send(sender=self.__class__)
+        request_started.send(sender=self.__class__, environ=environ)
         request_started.connect(close_old_connections)
         request = WSGIRequest(environ)
         # sneaky little hack so that we can easily get round
@@ -269,17 +270,18 @@ class RequestFactory(object):
         # If there are parameters, add them
         if parsed[3]:
             path += str(";") + force_str(parsed[3])
-        path = unquote(path)
-        # WSGI requires latin-1 encoded strings. See get_path_info().
-        if six.PY3:
-            path = path.encode('utf-8').decode('iso-8859-1')
-        return path
+        path = uri_to_iri(path).encode(UTF_8)
+        # Under Python 3, non-ASCII values in the WSGI environ are arbitrarily
+        # decoded with ISO-8859-1. We replicate this behavior here.
+        # Refs comment in `get_bytes_from_wsgi()`.
+        return path.decode(ISO_8859_1) if six.PY3 else path
 
     def get(self, path, data=None, secure=False, **extra):
         "Construct a GET request."
 
+        data = {} if data is None else data
         r = {
-            'QUERY_STRING': urlencode(data or {}, doseq=True),
+            'QUERY_STRING': urlencode(data, doseq=True),
         }
         r.update(extra)
         return self.generic('GET', path, secure=secure, **r)
@@ -288,7 +290,8 @@ class RequestFactory(object):
              secure=False, **extra):
         "Construct a POST request."
 
-        post_data = self._encode_data(data or {}, content_type)
+        data = {} if data is None else data
+        post_data = self._encode_data(data, content_type)
 
         return self.generic('POST', path, post_data, content_type,
                             secure=secure, **extra)
@@ -296,11 +299,16 @@ class RequestFactory(object):
     def head(self, path, data=None, secure=False, **extra):
         "Construct a HEAD request."
 
+        data = {} if data is None else data
         r = {
-            'QUERY_STRING': urlencode(data or {}, doseq=True),
+            'QUERY_STRING': urlencode(data, doseq=True),
         }
         r.update(extra)
         return self.generic('HEAD', path, secure=secure, **r)
+
+    def trace(self, path, secure=False, **extra):
+        "Construct a TRACE request."
+        return self.generic('TRACE', path, secure=secure, **extra)
 
     def options(self, path, data='', content_type='application/octet-stream',
                 secure=False, **extra):
@@ -393,6 +401,11 @@ class Client(RequestFactory):
             cookie = self.cookies.get(settings.SESSION_COOKIE_NAME, None)
             if cookie:
                 return engine.SessionStore(cookie.value)
+            else:
+                s = engine.SessionStore()
+                s.save()
+                self.cookies[settings.SESSION_COOKIE_NAME] = s.session_key
+                return s
         return {}
     session = property(_session)
 
@@ -443,6 +456,10 @@ class Client(RequestFactory):
             # Add any rendered template detail to the response.
             response.templates = data.get("templates", [])
             response.context = data.get("context")
+
+            # Attach the ResolverMatch instance to the response
+            response.resolver_match = SimpleLazyObject(
+                lambda: urlresolvers.resolve(request['PATH_INFO']))
 
             # Flatten a single context. Not really necessary anymore thanks to
             # the __getattr__ flattening in ContextList, but has some edge-case
@@ -539,6 +556,15 @@ class Client(RequestFactory):
             response = self._handle_redirects(response, **extra)
         return response
 
+    def trace(self, path, data='', follow=False, secure=False, **extra):
+        """
+        Send a TRACE request to the server.
+        """
+        response = super(Client, self).trace(path, data=data, secure=secure, **extra)
+        if follow:
+            response = self._handle_redirects(response, **extra)
+        return response
+
     def login(self, **credentials):
         """
         Sets the Factory to appear as if it has successfully logged into a site.
@@ -553,8 +579,8 @@ class Client(RequestFactory):
                 apps.is_installed('django.contrib.sessions')):
             engine = import_module(settings.SESSION_ENGINE)
 
-            # Create a fake request that goes through request middleware
-            request = self.request().wsgi_request
+            # Create a fake request to store login details.
+            request = HttpRequest()
 
             if self.session:
                 request.session = self.session
@@ -587,17 +613,13 @@ class Client(RequestFactory):
 
         Causes the authenticated user to be logged out.
         """
-        from django.contrib.auth import get_user_model, logout
-        # Create a fake request that goes through request middleware
-        request = self.request().wsgi_request
+        from django.contrib.auth import get_user, logout
 
+        request = HttpRequest()
         engine = import_module(settings.SESSION_ENGINE)
-        UserModel = get_user_model()
         if self.session:
             request.session = self.session
-            uid = self.session.get("_auth_user_id")
-            if uid:
-                request.user = UserModel._default_manager.get(pk=uid)
+            request.user = get_user(request)
         else:
             request.session = engine.SessionStore()
         logout(request)

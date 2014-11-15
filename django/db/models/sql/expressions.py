@@ -40,7 +40,7 @@ class SQLEvaluator(object):
         return self.expression.evaluate(self, qn, connection)
 
     #####################################################
-    # Vistor methods for initial expression preparation #
+    # Visitor methods for initial expression preparation #
     #####################################################
 
     def prepare_node(self, node, query, allow_joins):
@@ -57,9 +57,9 @@ class SQLEvaluator(object):
             self.cols.append((node, query.aggregate_select[node.name]))
         else:
             try:
-                field, sources, opts, join_list, path = query.setup_joins(
-                    field_list, query.get_meta(),
-                    query.get_initial_alias(), self.reuse)
+                _, sources, _, join_list, path = query.setup_joins(
+                    field_list, query.get_meta(), query.get_initial_alias(),
+                    can_reuse=self.reuse)
                 self._used_joins = join_list
                 targets, _, join_list = query.trim_joins(sources, join_list, path)
                 if self.reuse is not None:
@@ -72,7 +72,7 @@ class SQLEvaluator(object):
                                                       [f.name for f in self.opts.fields]))
 
     ##################################################
-    # Vistor methods for final expression evaluation #
+    # Visitor methods for final expression evaluation #
     ##################################################
 
     def evaluate_node(self, node, qn, connection):

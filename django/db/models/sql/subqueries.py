@@ -128,7 +128,10 @@ class UpdateQuery(Query):
         for name, val in six.iteritems(values):
             field, model, direct, m2m = self.get_meta().get_field_by_name(name)
             if not direct or m2m:
-                raise FieldError('Cannot update model field %r (only non-relations and foreign keys permitted).' % field)
+                raise FieldError(
+                    'Cannot update model field %r (only non-relations and '
+                    'foreign keys permitted).' % field
+                )
             if model:
                 self.add_related_update(model, field, val)
                 continue
@@ -215,7 +218,7 @@ class DateQuery(Query):
         Converts the query into an extraction query.
         """
         try:
-            result = self.setup_joins(
+            field, _, _, joins, _ = self.setup_joins(
                 field_name.split(LOOKUP_SEP),
                 self.get_meta(),
                 self.get_initial_alias(),
@@ -224,9 +227,8 @@ class DateQuery(Query):
             raise FieldDoesNotExist("%s has no field named '%s'" % (
                 self.get_meta().object_name, field_name
             ))
-        field = result[0]
         self._check_field(field)                # overridden in DateTimeQuery
-        alias = result[3][-1]
+        alias = joins[-1]
         select = self._get_select((alias, field.column), lookup_type)
         self.clear_select_clause()
         self.select = [SelectInfo(select, None)]

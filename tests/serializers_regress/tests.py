@@ -10,7 +10,7 @@ from __future__ import unicode_literals
 
 import datetime
 import decimal
-from unittest import skip, skipUnless
+from unittest import skipUnless
 import warnings
 
 try:
@@ -24,7 +24,7 @@ from django.core.serializers.base import DeserializationError
 from django.core.serializers.xml_serializer import DTDForbidden
 from django.db import connection, models
 from django.http import HttpResponse
-from django.test import TestCase
+from django.test import skipUnlessDBFeature, TestCase
 from django.utils import six
 from django.utils.functional import curry
 
@@ -402,6 +402,7 @@ if connection.features.allows_auto_pk_0:
 # registered serializers are automatically tested.
 
 
+@skipUnlessDBFeature('can_defer_constraint_checks')
 class SerializerTests(TestCase):
     def test_get_unknown_serializer(self):
         """
@@ -418,11 +419,11 @@ class SerializerTests(TestCase):
             serializers.get_serializer("nonsense")
         self.assertEqual(cm.exception.args, ("nonsense",))
 
-    def test_unregister_unkown_serializer(self):
+    def test_unregister_unknown_serializer(self):
         with self.assertRaises(SerializerDoesNotExist):
             serializers.unregister_serializer("nonsense")
 
-    def test_get_unkown_deserializer(self):
+    def test_get_unknown_deserializer(self):
         with self.assertRaises(SerializerDoesNotExist):
             serializers.get_deserializer("nonsense")
 
@@ -449,6 +450,7 @@ class SerializerTests(TestCase):
         self.assertEqual(base_data, proxy_proxy_data.replace('proxy', ''))
 
 
+@skipUnlessDBFeature('supports_binary_field')
 def serializerTest(format, self):
 
     # Create all the objects defined in the test data
@@ -480,9 +482,6 @@ def serializerTest(format, self):
     # same as the number that was serialized.
     for klass, count in instance_count.items():
         self.assertEqual(count, klass.objects.count())
-
-if connection.vendor == 'mysql' and six.PY3:
-    serializerTest = skip("Existing MySQL DB-API drivers fail on binary data.")(serializerTest)
 
 
 def naturalKeySerializerTest(format, self):

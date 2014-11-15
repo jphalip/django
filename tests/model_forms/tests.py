@@ -13,6 +13,7 @@ from django.db import connection
 from django.db.models.query import EmptyQuerySet
 from django.forms.models import (construct_instance, fields_for_model,
     model_to_dict, modelform_factory, ModelFormMetaclass)
+from django.template import Template, Context
 from django.test import TestCase, skipUnlessDBFeature
 from django.utils._os import upath
 from django.utils import six
@@ -20,10 +21,10 @@ from django.utils import six
 from .models import (Article, ArticleStatus, Author, Author1, BetterWriter, BigInt, Book,
     Category, CommaSeparatedInteger, CustomFF, CustomFieldForExclusionModel,
     DerivedBook, DerivedPost, Document, ExplicitPK, FilePathModel, FlexibleDatePost, Homepage,
-    ImprovedArticle, ImprovedArticleWithParentLink, Inventory, Person, Post, Price,
+    ImprovedArticle, ImprovedArticleWithParentLink, Inventory, Person, Photo, Post, Price,
     Product, Publication, TextFile, Triple, Writer, WriterProfile,
     Colour, ColourfulItem, DateTimePost, CustomErrorMessage,
-    test_images, StumpJoke, Character)
+    test_images, StumpJoke, Character, Student)
 
 if test_images:
     from .models import ImageFile, OptionalImageFile
@@ -199,6 +200,34 @@ class ModelFormBaseTest(TestCase):
         instance = construct_instance(form, Person(), fields=())
         self.assertEqual(instance.name, '')
 
+    def test_blank_with_null_foreign_key_field(self):
+        """
+        #13776 -- ModelForm's with models having a FK set to null=False and
+        required=False should be valid.
+        """
+        class FormForTestingIsValid(forms.ModelForm):
+            class Meta:
+                model = Student
+                fields = '__all__'
+
+            def __init__(self, *args, **kwargs):
+                super(FormForTestingIsValid, self).__init__(*args, **kwargs)
+                self.fields['character'].required = False
+
+        char = Character.objects.create(username='user',
+                                        last_action=datetime.datetime.today())
+        data = {'study': 'Engineering'}
+        data2 = {'study': 'Engineering', 'character': char.pk}
+
+        # form is valid because required=False for field 'character'
+        f1 = FormForTestingIsValid(data)
+        self.assertTrue(f1.is_valid())
+
+        f2 = FormForTestingIsValid(data2)
+        self.assertTrue(f2.is_valid())
+        obj = f2.save()
+        self.assertEqual(obj.character, char)
+
     def test_missing_fields_attribute(self):
         message = (
             "Creating a ModelForm without either the 'fields' attribute "
@@ -229,7 +258,7 @@ class ModelFormBaseTest(TestCase):
         except FieldError as e:
             # Make sure the exception contains some reference to the
             # field responsible for the problem.
-            self.assertTrue('no-field' in e.args[0])
+            self.assertIn('no-field', e.args[0])
         else:
             self.fail('Invalid "no-field" field not caught')
 
@@ -650,7 +679,7 @@ class UniqueTest(TestCase):
         form = TripleForm({'left': '1', 'middle': '3', 'right': '1'})
         self.assertTrue(form.is_valid())
 
-    @skipUnlessDBFeature('ignores_nulls_in_unique_constraints')
+    @skipUnlessDBFeature('supports_nullable_unique_constraints')
     def test_unique_null(self):
         title = 'I May Be Wrong But I Doubt It'
         form = BookForm({'title': title, 'author': self.writer.pk})
@@ -1087,7 +1116,7 @@ class ModelFormBasicTests(TestCase):
         self.assertEqual(f.cleaned_data['slug'], 'entertainment')
         self.assertEqual(f.cleaned_data['url'], 'entertainment')
         c1 = f.save()
-        # Testing wether the same object is returned from the
+        # Testing whether the same object is returned from the
         # ORM... not the fastest way...
 
         self.assertEqual(Category.objects.count(), 1)
@@ -1363,6 +1392,13 @@ class ModelChoiceFieldTests(TestCase):
             f.clean(None)
         with self.assertRaises(ValidationError):
             f.clean(0)
+
+        # Invalid types that require TypeError to be caught (#22808).
+        with self.assertRaises(ValidationError):
+            f.clean([['fail']])
+        with self.assertRaises(ValidationError):
+            f.clean([{'foo': 'bar'}])
+
         self.assertEqual(f.clean(self.c2.id).name, "It's a test")
         self.assertEqual(f.clean(self.c3.id).name, 'Third')
 
@@ -1428,8 +1464,23 @@ class ModelChoiceFieldTests(TestCase):
         field1 = form1.fields['category']
         # To allow the widget to change the queryset of field1.widget.choices correctly,
         # without affecting other forms, the following must hold:
-        self.assertTrue(field1 is not ModelChoiceForm.base_fields['category'])
-        self.assertTrue(field1.widget.choices.field is field1)
+        self.assertIsNot(field1, ModelChoiceForm.base_fields['category'])
+        self.assertIs(field1.widget.choices.field, field1)
+
+    def test_modelchoicefield_22745(self):
+        """
+        #22745 -- Make sure that ModelChoiceField with RadioSelect widget
+        doesn't produce unnecessary db queries when accessing its BoundField's
+        attrs.
+        """
+        class ModelChoiceForm(forms.Form):
+            category = forms.ModelChoiceField(Category.objects.all(), widget=forms.RadioSelect)
+
+        form = ModelChoiceForm()
+        field = form['category']  # BoundField
+        template = Template('{{ field.name }}{{ field }}{{ field.help_text }}')
+        with self.assertNumQueries(1):
+            template.render(Context({'field': field}))
 
 
 class ModelMultipleChoiceFieldTests(TestCase):
@@ -1466,6 +1517,12 @@ class ModelMultipleChoiceFieldTests(TestCase):
             f.clean('hello')
         with self.assertRaises(ValidationError):
             f.clean(['fail'])
+
+        # Invalid types that require TypeError to be caught (#22808).
+        with self.assertRaises(ValidationError):
+            f.clean([['fail']])
+        with self.assertRaises(ValidationError):
+            f.clean([{'foo': 'bar'}])
 
         # Add a Category object *after* the ModelMultipleChoiceField has already been
         # instantiated. This proves clean() checks the database during clean() rather
@@ -1562,6 +1619,21 @@ class ModelMultipleChoiceFieldTests(TestCase):
                                 'persons': [str(person2.pk)]})
         self.assertTrue(form.is_valid())
         self.assertTrue(form.has_changed())
+
+    def test_model_multiple_choice_field_22745(self):
+        """
+        #22745 -- Make sure that ModelMultipleChoiceField with
+        CheckboxSelectMultiple widget doesn't produce unnecessary db queries
+        when accessing its BoundField's attrs.
+        """
+        class ModelMultipleChoiceForm(forms.Form):
+            categories = forms.ModelMultipleChoiceField(Category.objects.all(), widget=forms.CheckboxSelectMultiple)
+
+        form = ModelMultipleChoiceForm()
+        field = form['categories']  # BoundField
+        template = Template('{{ field.name }}{{ field }}{{ field.help_text }}')
+        with self.assertNumQueries(1):
+            template.render(Context({'field': field}))
 
 
 class ModelOneToOneFieldTests(TestCase):
@@ -1692,14 +1764,14 @@ class FileAndImageFieldTests(TestCase):
                 fields = '__all__'
 
         form = DocumentForm()
-        self.assertTrue('name="myfile"' in six.text_type(form))
-        self.assertTrue('myfile-clear' not in six.text_type(form))
+        self.assertIn('name="myfile"', six.text_type(form))
+        self.assertNotIn('myfile-clear', six.text_type(form))
         form = DocumentForm(files={'myfile': SimpleUploadedFile('something.txt', b'content')})
         self.assertTrue(form.is_valid())
         doc = form.save(commit=False)
         self.assertEqual(doc.myfile.name, 'something.txt')
         form = DocumentForm(instance=doc)
-        self.assertTrue('myfile-clear' in six.text_type(form))
+        self.assertIn('myfile-clear', six.text_type(form))
         form = DocumentForm(instance=doc, data={'myfile-clear': 'true'})
         doc = form.save(commit=False)
         self.assertEqual(bool(doc.myfile), False)
@@ -1725,8 +1797,8 @@ class FileAndImageFieldTests(TestCase):
         self.assertEqual(form.errors['myfile'],
                          ['Please either submit a file or check the clear checkbox, not both.'])
         rendered = six.text_type(form)
-        self.assertTrue('something.txt' in rendered)
-        self.assertTrue('myfile-clear' in rendered)
+        self.assertIn('something.txt', rendered)
+        self.assertIn('myfile-clear', rendered)
 
     def test_file_field_data(self):
         # Test conditions when files is either not given or empty.
@@ -1828,6 +1900,36 @@ class FileAndImageFieldTests(TestCase):
         form = CFFForm(data={'f': None})
         form.save()
 
+    def test_file_field_multiple_save(self):
+        """
+        Simulate a file upload and check how many times Model.save() gets
+        called. Test for bug #639.
+        """
+        class PhotoForm(forms.ModelForm):
+            class Meta:
+                model = Photo
+                fields = '__all__'
+
+        # Grab an image for testing.
+        filename = os.path.join(os.path.dirname(upath(__file__)), "test.png")
+        with open(filename, "rb") as fp:
+            img = fp.read()
+
+        # Fake a POST QueryDict and FILES MultiValueDict.
+        data = {'title': 'Testing'}
+        files = {"image": SimpleUploadedFile('test.png', img, 'image/png')}
+
+        form = PhotoForm(data=data, files=files)
+        p = form.save()
+
+        try:
+            # Check the savecount stored on the object (see the model).
+            self.assertEqual(p._savecount, 1)
+        finally:
+            # Delete the "uploaded" file to avoid clogging /tmp.
+            p = Photo.objects.get()
+            p.image.delete(save=False)
+
     def test_file_path_field_blank(self):
         """
         Regression test for #8842: FilePathField(blank=True)
@@ -1844,7 +1946,7 @@ class FileAndImageFieldTests(TestCase):
 
     @skipUnless(test_images, "Pillow not installed")
     def test_image_field(self):
-        # ImageField and FileField are nearly identical, but they differ slighty when
+        # ImageField and FileField are nearly identical, but they differ slightly when
         # it comes to validation. This specifically tests that #6302 is fixed for
         # both file fields and image fields.
 
@@ -2227,7 +2329,7 @@ class ModelFormInheritanceTests(TestCase):
 
         self.assertEqual(list(ModelForm().fields.keys()), ['name', 'age'])
 
-    def test_field_shadowing(self):
+    def test_field_removal(self):
         class ModelForm(forms.ModelForm):
             class Meta:
                 model = Writer
@@ -2250,11 +2352,41 @@ class ModelFormInheritanceTests(TestCase):
         self.assertEqual(list(type(str('NewForm'), (ModelForm, Form, Mixin), {})().fields.keys()), ['name', 'age'])
         self.assertEqual(list(type(str('NewForm'), (ModelForm, Form), {'age': None})().fields.keys()), ['name'])
 
+    def test_field_removal_name_clashes(self):
+        """Regression test for https://code.djangoproject.com/ticket/22510."""
+
+        class MyForm(forms.ModelForm):
+            media = forms.CharField()
+
+            class Meta:
+                model = Writer
+                fields = '__all__'
+
+        class SubForm(MyForm):
+            media = None
+
+        self.assertIn('media', MyForm().fields)
+        self.assertNotIn('media', SubForm().fields)
+        self.assertTrue(hasattr(MyForm, 'media'))
+        self.assertTrue(hasattr(SubForm, 'media'))
+
 
 class StumpJokeForm(forms.ModelForm):
     class Meta:
         model = StumpJoke
         fields = '__all__'
+
+
+class CustomFieldWithQuerysetButNoLimitChoicesTo(forms.Field):
+    queryset = 42
+
+
+class StumpJokeWithCustomFieldForm(forms.ModelForm):
+    custom = CustomFieldWithQuerysetButNoLimitChoicesTo()
+
+    class Meta:
+        model = StumpJoke
+        fields = ()  # We don't need any fields from the model
 
 
 class LimitChoicesToTest(TestCase):
@@ -2287,6 +2419,14 @@ class LimitChoicesToTest(TestCase):
         self.assertIn(self.threepwood, stumpjokeform.fields['has_fooled_today'].queryset)
         self.assertNotIn(self.marley, stumpjokeform.fields['has_fooled_today'].queryset)
 
+    def test_custom_field_with_queryset_but_no_limit_choices_to(self):
+        """
+        Regression test for #23795: Make sure a custom field with a `queryset`
+        attribute but no `limit_choices_to` still works.
+        """
+        f = StumpJokeWithCustomFieldForm()
+        self.assertEqual(f.fields['custom'].queryset, 42)
+
 
 class FormFieldCallbackTests(TestCase):
 
@@ -2301,7 +2441,7 @@ class FormFieldCallbackTests(TestCase):
                 fields = "__all__"
 
         Form = modelform_factory(Person, form=BaseForm)
-        self.assertTrue(Form.base_fields['name'].widget is widget)
+        self.assertIs(Form.base_fields['name'].widget, widget)
 
     def test_factory_with_widget_argument(self):
         """ Regression for #15315: modelform_factory should accept widgets

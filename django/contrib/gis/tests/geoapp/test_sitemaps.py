@@ -1,15 +1,17 @@
 from __future__ import unicode_literals
 
 from io import BytesIO
-from unittest import skipUnless
 from xml.dom import minidom
+import warnings
 import zipfile
 
 from django.conf import settings
 from django.contrib.gis.geos import HAS_GEOS
-from django.contrib.gis.tests.utils import HAS_SPATIAL_DB
 from django.contrib.sites.models import Site
-from django.test import TestCase, modify_settings, override_settings
+from django.test import (
+    TestCase, modify_settings, override_settings, skipUnlessDBFeature
+)
+from django.utils.deprecation import RemovedInDjango20Warning
 
 if HAS_GEOS:
     from .models import City, Country
@@ -17,7 +19,7 @@ if HAS_GEOS:
 
 @modify_settings(INSTALLED_APPS={'append': ['django.contrib.sites', 'django.contrib.sitemaps']})
 @override_settings(ROOT_URLCONF='django.contrib.gis.tests.geoapp.urls')
-@skipUnless(HAS_GEOS and HAS_SPATIAL_DB, "Geos and spatial db are required.")
+@skipUnlessDBFeature("gis_enabled")
 class GeoSitemapTest(TestCase):
 
     def setUp(self):
@@ -33,7 +35,16 @@ class GeoSitemapTest(TestCase):
     def test_geositemap_kml(self):
         "Tests KML/KMZ geographic sitemaps."
         for kml_type in ('kml', 'kmz'):
-            doc = minidom.parseString(self.client.get('/sitemaps/%s.xml' % kml_type).content)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RemovedInDjango20Warning)
+                # The URL for the sitemaps in urls.py have been updated
+                # with a name but since reversing by Python path is tried first
+                # before reversing by name and works since we're giving
+                # name='django.contrib.gis.sitemaps.views.(kml|kmz)', we need
+                # to silence the erroneous warning until reversing by dotted
+                # path is removed. The test will work without modification when
+                # it's removed.
+                doc = minidom.parseString(self.client.get('/sitemaps/%s.xml' % kml_type).content)
 
             # Ensuring the right sitemaps namespace is present.
             urlset = doc.firstChild

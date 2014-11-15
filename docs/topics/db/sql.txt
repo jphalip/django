@@ -13,6 +13,14 @@ return model instances`__, or you can avoid the model layer entirely and
 __ `performing raw queries`_
 __ `executing custom SQL directly`_
 
+.. warning::
+
+    You should be very careful whenever you write raw SQL. Every time you use
+    it, you should properly escape any parameters that the user can control
+    by using ``params`` in order to protect against SQL injection attacks.
+    Please read more about :ref:`SQL injection protection
+    <sql-injection-protection>`.
+
 .. _executing-raw-queries:
 
 Performing raw queries
@@ -25,7 +33,8 @@ return model instances:
 
 This method takes a raw SQL query, executes it, and returns a
 ``django.db.models.query.RawQuerySet`` instance. This ``RawQuerySet`` instance
-can be iterated over just like a normal QuerySet to provide object instances.
+can be iterated over just like a normal
+:class:`~django.db.models.query.QuerySet` to provide object instances.
 
 This is best illustrated with an example. Suppose you have the following model::
 
@@ -65,6 +74,27 @@ options that make it very powerful.
     Django expects that the statement will return a set of rows from the
     database, but does nothing to enforce that. If the query does not
     return rows, a (possibly cryptic) error will result.
+
+.. warning::
+
+    If you are performing queries on MySQL, note that MySQL's silent type coercion
+    may cause unexpected results when mixing types. If you query on a string
+    type column, but with an integer value, MySQL will coerce the types of all values
+    in the table to an integer before performing the comparison. For example, if your
+    table contains the values ``'abc'``, ``'def'`` and you query for ``WHERE mycolumn=0``,
+    both rows will match. To prevent this, perform the correct typecasting
+    before using the value in a query.
+
+.. warning::
+
+    While a ``RawQuerySet`` instance can be iterated over like a normal
+    :class:`~django.db.models.query.QuerySet`, ``RawQuerySet`` doesn't
+    implement all methods you can use with ``QuerySet``. For example,
+    ``__bool__()`` and ``__len__()`` are not defined in ``RawQuerySet``, and
+    thus all ``RawQuerySet`` instances are considered ``True``. The reason
+    these methods are not implemented in ``RawQuerySet`` is that implementing
+    them without internal caching would be a performance drawback and adding
+    such caching would be backward incompatible.
 
 Mapping query fields to model fields
 ------------------------------------
@@ -294,16 +324,12 @@ manager.
 
 .. _`Python ticket #9220`: http://bugs.python.org/issue9220
 
-Using a cursor as a context manager:
-
-.. code-block:: python
+Using a cursor as a context manager::
 
     with connection.cursor() as c:
         c.execute(...)
 
-is equivalent to:
-
-.. code-block:: python
+is equivalent to::
 
     c = connection.cursor()
     try:

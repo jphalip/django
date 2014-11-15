@@ -1,12 +1,14 @@
 from django.conf.urls import url
+from django.contrib.auth import views as auth_views
 from django.views.generic import RedirectView
 
 from . import views
 
 
 urlpatterns = [
-    url(r'^get_view/$', views.get_view),
+    url(r'^get_view/$', views.get_view, name='get_view'),
     url(r'^post_view/$', views.post_view),
+    url(r'^trace_view/$', views.trace_view),
     url(r'^header_view/$', views.view_with_header),
     url(r'^raw_post_view/$', views.raw_post_view),
     url(r'^redirect_view/$', views.redirect_view),
@@ -32,6 +34,6 @@ urlpatterns = [
     url(r'^mass_mail_sending_view/$', views.mass_mail_sending_view),
     url(r'^django_project_redirect/$', views.django_project_redirect),
 
-    url(r'^accounts/login/$', 'django.contrib.auth.views.login', {'template_name': 'login.html'}),
-    url(r'^accounts/logout/$', 'django.contrib.auth.views.logout'),
+    url(r'^accounts/login/$', auth_views.login, {'template_name': 'login.html'}),
+    url(r'^accounts/logout/$', auth_views.logout),
 ]

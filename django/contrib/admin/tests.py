@@ -7,7 +7,7 @@ import sys
 import types
 from unittest import SkipTest
 
-from django.contrib.staticfiles.testing import StaticLiveServerCase
+from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.utils.module_loading import import_string
 from django.utils.translation import ugettext as _
 
@@ -38,7 +38,7 @@ class AdminSeleniumMetaClass(type):
         return type.__new__(cls, name, bases, attrs)
 
 
-class AdminSeleniumWebDriverTestCase(StaticLiveServerCase):
+class AdminSeleniumWebDriverTestCase(StaticLiveServerTestCase):
     __metaclass__ = AdminSeleniumMetaClass
 
     available_apps = [

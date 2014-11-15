@@ -4,17 +4,17 @@ import warnings
 
 from django.contrib import admin
 from django.contrib.admin.sites import AdminSite
+from django.contrib.auth.models import User
 from django.contrib.contenttypes.admin import GenericTabularInline
 from django.contrib.contenttypes.forms import generic_inlineformset_factory
 from django.forms.formsets import DEFAULT_MAX_NUM
 from django.forms.models import ModelForm
-from django.test import TestCase, override_settings
+from django.test import TestCase, override_settings, RequestFactory
 from django.utils.deprecation import RemovedInDjango19Warning
 
 # local test models
-from .admin import MediaInline, MediaPermanentInline
-from .models import (Episode, EpisodeExtra, EpisodeMaxNum, Media,
-    EpisodePermanent, Category)
+from .admin import MediaInline, MediaPermanentInline, site as admin_site
+from .models import Episode, Media, EpisodePermanent, Category
 
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
@@ -46,21 +46,21 @@ class GenericAdminViewTest(TestCase):
     def tearDown(self):
         self.client.logout()
 
-    def testBasicAddGet(self):
+    def test_basic_add_GET(self):
         """
         A smoke test to ensure GET on the add_view works.
         """
         response = self.client.get('/generic_inline_admin/admin/generic_inline_admin/episode/add/')
         self.assertEqual(response.status_code, 200)
 
-    def testBasicEditGet(self):
+    def test_basic_edit_GET(self):
         """
         A smoke test to ensure GET on the change_view works.
         """
         response = self.client.get('/generic_inline_admin/admin/generic_inline_admin/episode/%d/' % self.episode_pk)
         self.assertEqual(response.status_code, 200)
 
-    def testBasicAddPost(self):
+    def test_basic_add_POST(self):
         """
         A smoke test to ensure POST on add_view works.
         """
@@ -74,7 +74,7 @@ class GenericAdminViewTest(TestCase):
         response = self.client.post('/generic_inline_admin/admin/generic_inline_admin/episode/add/', post_data)
         self.assertEqual(response.status_code, 302)  # redirect somewhere
 
-    def testBasicEditPost(self):
+    def test_basic_edit_POST(self):
         """
         A smoke test to ensure POST on edit_view works.
         """
@@ -95,7 +95,7 @@ class GenericAdminViewTest(TestCase):
         response = self.client.post(url, post_data)
         self.assertEqual(response.status_code, 302)  # redirect somewhere
 
-    def testGenericInlineFormset(self):
+    def test_generic_inline_formset(self):
         EpisodeMediaFormSet = generic_inlineformset_factory(Media, can_delete=False, exclude=['description', 'keywords'], extra=3)
         e = Episode.objects.get(name='This Week in Django')
 
@@ -119,7 +119,7 @@ class GenericAdminViewTest(TestCase):
         self.assertHTMLEqual(formset.forms[0].as_p(), '<p><label for="id_generic_inline_admin-media-content_type-object_id-0-url">Url:</label> <input id="id_generic_inline_admin-media-content_type-object_id-0-url" type="url" name="generic_inline_admin-media-content_type-object_id-0-url" value="http://example.com/logo.png" maxlength="200" /><input type="hidden" name="generic_inline_admin-media-content_type-object_id-0-id" value="%s" id="id_generic_inline_admin-media-content_type-object_id-0-id" /></p>' % self.png_media_pk)
         self.assertHTMLEqual(formset.forms[1].as_p(), '<p><label for="id_generic_inline_admin-media-content_type-object_id-1-url">Url:</label> <input id="id_generic_inline_admin-media-content_type-object_id-1-url" type="url" name="generic_inline_admin-media-content_type-object_id-1-url" maxlength="200" /><input type="hidden" name="generic_inline_admin-media-content_type-object_id-1-id" id="id_generic_inline_admin-media-content_type-object_id-1-id" /></p>')
 
-    def testGenericInlineFormsetFactory(self):
+    def test_generic_inline_formset_factory(self):
         # Regression test for #10522.
         inline_formset = generic_inlineformset_factory(Media,
             exclude=('url',))
@@ -137,6 +137,7 @@ class GenericInlineAdminParametersTest(TestCase):
 
     def setUp(self):
         self.client.login(username='super', password='secret')
+        self.factory = RequestFactory()
 
     def tearDown(self):
         self.client.logout()
@@ -152,7 +153,7 @@ class GenericInlineAdminParametersTest(TestCase):
         Media.objects.create(content_object=e, url='http://example.com/podcast.mp3')
         return e
 
-    def testNoParam(self):
+    def test_no_param(self):
         """
         With one initial form, extra (default) at 3, there should be 4 forms.
         """
@@ -162,13 +163,22 @@ class GenericInlineAdminParametersTest(TestCase):
         self.assertEqual(formset.total_form_count(), 4)
         self.assertEqual(formset.initial_form_count(), 1)
 
-    def testExtraParam(self):
+    def test_extra_param(self):
         """
         With extra=0, there should be one form.
         """
-        e = self._create_object(EpisodeExtra)
-        response = self.client.get('/generic_inline_admin/admin/generic_inline_admin/episodeextra/%s/' % e.pk)
-        formset = response.context['inline_admin_formsets'][0].formset
+        class ExtraInline(GenericTabularInline):
+            model = Media
+            extra = 0
+
+        modeladmin = admin.ModelAdmin(Episode, admin_site)
+        modeladmin.inlines = [ExtraInline]
+
+        e = self._create_object(Episode)
+        request = self.factory.get('/generic_inline_admin/admin/generic_inline_admin/episode/%s/' % e.pk)
+        request.user = User(username='super', is_superuser=True)
+        response = modeladmin.changeform_view(request, object_id=str(e.pk))
+        formset = response.context_data['inline_admin_formsets'][0].formset
         self.assertEqual(formset.total_form_count(), 1)
         self.assertEqual(formset.initial_form_count(), 1)
 
@@ -176,11 +186,98 @@ class GenericInlineAdminParametersTest(TestCase):
         """
         With extra=5 and max_num=2, there should be only 2 forms.
         """
-        e = self._create_object(EpisodeMaxNum)
-        response = self.client.get('/generic_inline_admin/admin/generic_inline_admin/episodemaxnum/%s/' % e.pk)
-        formset = response.context['inline_admin_formsets'][0].formset
+        class MaxNumInline(GenericTabularInline):
+            model = Media
+            extra = 5
+            max_num = 2
+
+        modeladmin = admin.ModelAdmin(Episode, admin_site)
+        modeladmin.inlines = [MaxNumInline]
+
+        e = self._create_object(Episode)
+        request = self.factory.get('/generic_inline_admin/admin/generic_inline_admin/episode/%s/' % e.pk)
+        request.user = User(username='super', is_superuser=True)
+        response = modeladmin.changeform_view(request, object_id=str(e.pk))
+        formset = response.context_data['inline_admin_formsets'][0].formset
         self.assertEqual(formset.total_form_count(), 2)
         self.assertEqual(formset.initial_form_count(), 1)
+
+    def test_min_num_param(self):
+        """
+        With extra=3 and min_num=2, there should be five forms.
+        """
+        class MinNumInline(GenericTabularInline):
+            model = Media
+            extra = 3
+            min_num = 2
+
+        modeladmin = admin.ModelAdmin(Episode, admin_site)
+        modeladmin.inlines = [MinNumInline]
+
+        e = self._create_object(Episode)
+        request = self.factory.get('/generic_inline_admin/admin/generic_inline_admin/episode/%s/' % e.pk)
+        request.user = User(username='super', is_superuser=True)
+        response = modeladmin.changeform_view(request, object_id=str(e.pk))
+        formset = response.context_data['inline_admin_formsets'][0].formset
+        self.assertEqual(formset.total_form_count(), 5)
+        self.assertEqual(formset.initial_form_count(), 1)
+
+    def test_get_extra(self):
+
+        class GetExtraInline(GenericTabularInline):
+            model = Media
+            extra = 4
+
+            def get_extra(self, request, obj):
+                return 2
+
+        modeladmin = admin.ModelAdmin(Episode, admin_site)
+        modeladmin.inlines = [GetExtraInline]
+        e = self._create_object(Episode)
+        request = self.factory.get('/generic_inline_admin/admin/generic_inline_admin/episode/%s/' % e.pk)
+        request.user = User(username='super', is_superuser=True)
+        response = modeladmin.changeform_view(request, object_id=str(e.pk))
+        formset = response.context_data['inline_admin_formsets'][0].formset
+
+        self.assertEqual(formset.extra, 2)
+
+    def test_get_min_num(self):
+
+        class GetMinNumInline(GenericTabularInline):
+            model = Media
+            min_num = 5
+
+            def get_min_num(self, request, obj):
+                return 2
+
+        modeladmin = admin.ModelAdmin(Episode, admin_site)
+        modeladmin.inlines = [GetMinNumInline]
+        e = self._create_object(Episode)
+        request = self.factory.get('/generic_inline_admin/admin/generic_inline_admin/episode/%s/' % e.pk)
+        request.user = User(username='super', is_superuser=True)
+        response = modeladmin.changeform_view(request, object_id=str(e.pk))
+        formset = response.context_data['inline_admin_formsets'][0].formset
+
+        self.assertEqual(formset.min_num, 2)
+
+    def test_get_max_num(self):
+
+        class GetMaxNumInline(GenericTabularInline):
+            model = Media
+            extra = 5
+
+            def get_max_num(self, request, obj):
+                return 2
+
+        modeladmin = admin.ModelAdmin(Episode, admin_site)
+        modeladmin.inlines = [GetMaxNumInline]
+        e = self._create_object(Episode)
+        request = self.factory.get('/generic_inline_admin/admin/generic_inline_admin/episode/%s/' % e.pk)
+        request.user = User(username='super', is_superuser=True)
+        response = modeladmin.changeform_view(request, object_id=str(e.pk))
+        formset = response.context_data['inline_admin_formsets'][0].formset
+
+        self.assertEqual(formset.max_num, 2)
 
 
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
@@ -194,7 +291,7 @@ class GenericInlineAdminWithUniqueTogetherTest(TestCase):
     def tearDown(self):
         self.client.logout()
 
-    def testAdd(self):
+    def test_add(self):
         category_id = Category.objects.create(name='male').pk
         post_data = {
             "name": "John Doe",
@@ -216,8 +313,7 @@ class GenericInlineAdminWithUniqueTogetherTest(TestCase):
 class NoInlineDeletionTest(TestCase):
 
     def test_no_deletion(self):
-        fake_site = object()
-        inline = MediaPermanentInline(EpisodePermanent, fake_site)
+        inline = MediaPermanentInline(EpisodePermanent, admin_site)
         fake_request = object()
         formset = inline.get_formset(fake_request)
         self.assertFalse(formset.can_delete)

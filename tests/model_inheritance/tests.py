@@ -3,6 +3,7 @@ from __future__ import unicode_literals
 from operator import attrgetter
 
 from django.core.exceptions import FieldError
+from django.core.management import call_command
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
@@ -11,7 +12,7 @@ from django.utils import six
 from .models import (
     Chef, CommonInfo, ItalianRestaurant, ParkingLot, Place, Post,
     Restaurant, Student, Supplier, Worker, MixinModel,
-    Title, Base, SubBase)
+    Title, Copy, Base, SubBase)
 
 
 class ModelInheritanceTests(TestCase):
@@ -68,7 +69,7 @@ class ModelInheritanceTests(TestCase):
         # access to the fields of their ancestors.
         # Create a couple of Places.
         Place.objects.create(name="Master Shakes", address="666 W. Jersey")
-        Place.objects.create(name="Ace Harware", address="1013 N. Ashland")
+        Place.objects.create(name="Ace Hardware", address="1013 N. Ashland")
 
         # Test constructor for Restaurant.
         r = Restaurant.objects.create(
@@ -254,6 +255,43 @@ class ModelInheritanceTests(TestCase):
             1, lambda: ItalianRestaurant.objects.select_related("chef")[0].chef
         )
 
+    def test_select_related_defer(self):
+        """
+        #23370 - Should be able to defer child fields when using
+        select_related() from parent to child.
+        """
+        Restaurant.objects.create(
+            name="Demon Dogs",
+            address="944 W. Fullerton",
+            serves_hot_dogs=True,
+            serves_pizza=False,
+            rating=2,
+        )
+        ItalianRestaurant.objects.create(
+            name="Ristorante Miron",
+            address="1234 W. Ash",
+            serves_hot_dogs=False,
+            serves_pizza=False,
+            serves_gnocchi=True,
+            rating=4,
+        )
+
+        qs = (Restaurant.objects
+            .select_related("italianrestaurant")
+            .defer("italianrestaurant__serves_gnocchi")
+            .order_by("rating"))
+
+        # Test that the field was actually deferred
+        with self.assertNumQueries(2):
+            objs = list(qs.all())
+            self.assertTrue(objs[1].italianrestaurant.serves_gnocchi)
+
+        # Test that model fields where assigned correct values
+        self.assertEqual(qs[0].name, 'Demon Dogs')
+        self.assertEqual(qs[0].rating, 2)
+        self.assertEqual(qs[1].italianrestaurant.name, 'Ristorante Miron')
+        self.assertEqual(qs[1].italianrestaurant.rating, 4)
+
     def test_mixin_init(self):
         m = MixinModel()
         self.assertEqual(m.other_attr, 1)
@@ -339,3 +377,40 @@ class ModelInheritanceTests(TestCase):
         # accidentally found).
         self.assertQuerysetEqual(
             s.titles.all(), [])
+
+
+class InheritanceSameModelNameTests(TestCase):
+
+    def setUp(self):
+        # The Title model has distinct accessors for both
+        # model_inheritance.Copy and model_inheritance_same_model_name.Copy
+        # models.
+        self.title = Title.objects.create(title='Lorem Ipsum')
+
+    def test_inheritance_related_name(self):
+        self.assertEqual(
+            self.title.attached_model_inheritance_copy_set.create(
+                content='Save $ on V1agr@',
+                url='http://v1agra.com/',
+                title='V1agra is spam',
+            ), Copy.objects.get(
+                content='Save $ on V1agr@',
+            ))
+
+    def test_inheritance_with_same_model_name(self):
+        with self.modify_settings(
+                INSTALLED_APPS={'append': ['model_inheritance.same_model_name']}):
+            call_command('migrate', verbosity=0)
+            from .same_model_name.models import Copy
+            self.assertEqual(
+                self.title.attached_same_model_name_copy_set.create(
+                    content='The Web framework for perfectionists with deadlines.',
+                    url='http://www.djangoproject.com/',
+                    title='Django Rocks'
+                ), Copy.objects.get(
+                    content='The Web framework for perfectionists with deadlines.',
+                ))
+
+    def test_related_name_attribute_exists(self):
+        # The Post model doesn't have an attribute called 'attached_%(app_label)s_%(class)s_set'.
+        self.assertFalse(hasattr(self.title, 'attached_%(app_label)s_%(class)s_set'))

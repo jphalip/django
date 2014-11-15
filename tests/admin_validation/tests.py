@@ -212,17 +212,17 @@ class ValidationTestCase(TestCase):
             warnings.filterwarnings('ignore', module='django.contrib.admin.options')
             SongAdmin.validate(Song)
 
-    def test_nonexistant_field(self):
+    def test_nonexistent_field(self):
         class SongAdmin(admin.ModelAdmin):
-            readonly_fields = ("title", "nonexistant")
+            readonly_fields = ("title", "nonexistent")
 
         self.assertRaisesMessage(ImproperlyConfigured,
-            str_prefix("SongAdmin.readonly_fields[1], %(_)s'nonexistant' is not a callable "
+            str_prefix("SongAdmin.readonly_fields[1], %(_)s'nonexistent' is not a callable "
                        "or an attribute of 'SongAdmin' or found in the model 'Song'."),
             SongAdmin.validate,
             Song)
 
-    def test_nonexistant_field_on_inline(self):
+    def test_nonexistent_field_on_inline(self):
         class CityInline(admin.TabularInline):
             model = City
             readonly_fields = ['i_dont_exist']  # Missing attribute

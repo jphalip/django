@@ -42,7 +42,7 @@ class LoginRequiredTestCase(AuthViewsTestCase):
             login_url = settings.LOGIN_URL
         response = self.client.get(view_url)
         self.assertEqual(response.status_code, 302)
-        self.assertTrue(login_url in response.url)
+        self.assertIn(login_url, response.url)
         self.login()
         response = self.client.get(view_url)
         self.assertEqual(response.status_code, 200)
@@ -89,7 +89,7 @@ class PermissionsRequiredDecoratorTest(TestCase):
 
     def test_permissioned_denied_redirect(self):
 
-        @permission_required(['auth.add_customuser', 'auth.change_customuser', 'non-existant-permission'])
+        @permission_required(['auth.add_customuser', 'auth.change_customuser', 'non-existent-permission'])
         def a_view(request):
             return HttpResponse()
         request = self.factory.get('/rand')
@@ -99,7 +99,9 @@ class PermissionsRequiredDecoratorTest(TestCase):
 
     def test_permissioned_denied_exception_raised(self):
 
-        @permission_required(['auth.add_customuser', 'auth.change_customuser', 'non-existant-permission'], raise_exception=True)
+        @permission_required([
+            'auth.add_customuser', 'auth.change_customuser', 'non-existent-permission'
+        ], raise_exception=True)
         def a_view(request):
             return HttpResponse()
         request = self.factory.get('/rand')

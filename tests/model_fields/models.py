@@ -1,5 +1,6 @@
 import os
 import tempfile
+import uuid
 import warnings
 
 try:
@@ -10,6 +11,7 @@ except ImportError:
 from django.core.files.storage import FileSystemStorage
 from django.db import models
 from django.db.models.fields.files import ImageFieldFile, ImageField
+from django.utils import six
 
 
 class Foo(models.Model):
@@ -41,6 +43,29 @@ class Whiz(models.Model):
         (0, 'Other'),
     )
     c = models.IntegerField(choices=CHOICES, null=True)
+
+
+class Counter(six.Iterator):
+    def __init__(self):
+        self.n = 1
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.n > 5:
+            raise StopIteration
+        else:
+            self.n += 1
+            return (self.n, 'val-' + str(self.n))
+
+
+class WhizIter(models.Model):
+    c = models.IntegerField(choices=Counter(), null=True)
+
+
+class WhizIterEmpty(models.Model):
+    c = models.CharField(choices=(x for x in []), blank=True, max_length=1)
 
 
 class BigD(models.Model):
@@ -101,7 +126,7 @@ class PrimaryKeyCharModel(models.Model):
 
 
 class FksToBooleans(models.Model):
-    """Model wih FKs to models with {Null,}BooleanField's, #15040"""
+    """Model with FKs to models with {Null,}BooleanField's, #15040"""
     bf = models.ForeignKey(BooleanModel)
     nbf = models.ForeignKey(NullBooleanModel)
 
@@ -145,10 +170,20 @@ class VerboseNameField(models.Model):
     field22 = models.URLField("verbose field22")
 
 
-# This model isn't used in any test, just here to ensure it validates successfully.
+###############################################################################
+# These models aren't used in any test, just here to ensure they validate
+# successfully.
+
 # See ticket #16570.
 class DecimalLessThanOne(models.Model):
     d = models.DecimalField(max_digits=3, decimal_places=3)
+
+
+# See ticket #18389.
+class FieldClassAttributeModel(models.Model):
+    field_class = models.CharField
+
+###############################################################################
 
 
 class DataModel(models.Model):
@@ -184,7 +219,7 @@ if Image:
         attr_class = TestImageFieldFile
 
     # Set up a temp directory for file storage.
-    temp_storage_dir = tempfile.mkdtemp()
+    temp_storage_dir = tempfile.mkdtemp(dir=os.environ['DJANGO_TEST_TEMP_DIR'])
     temp_storage = FileSystemStorage(temp_storage_dir)
     temp_upload_to_dir = os.path.join(temp_storage.location, 'tests')
 
@@ -260,3 +295,15 @@ if Image:
                                   width_field='headshot_width')
 
 ###############################################################################
+
+
+class UUIDModel(models.Model):
+    field = models.UUIDField()
+
+
+class NullableUUIDModel(models.Model):
+    field = models.UUIDField(blank=True, null=True)
+
+
+class PrimaryKeyUUIDModel(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)

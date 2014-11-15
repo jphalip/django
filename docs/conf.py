@@ -31,7 +31,12 @@ needs_sphinx = '1.0'
 
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
-extensions = ["djangodocs", "sphinx.ext.intersphinx"]
+extensions = [
+    "djangodocs",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.viewcode",
+    "ticket_role",
+]
 
 # Spelling check needs an additional module that is not installed by default.
 # Add it only if spelling check is requested so docs can be generated without it.
@@ -118,13 +123,12 @@ show_authors = False
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'trac'
 
-# Links to Python's docs should reference the most recent version of the 2.x
+# Links to Python's docs should reference the most recent version of the 3.x
 # branch, which is located at this URL.
 intersphinx_mapping = {
-    'python': ('http://docs.python.org/', None),
+    'python': ('http://docs.python.org/3/', None),
     'sphinx': ('http://sphinx-doc.org/', None),
     'six': ('http://pythonhosted.org/six/', None),
-    'simplejson': ('http://simplejson.readthedocs.org/en/latest/', None),
 }
 
 # Python's docs don't change every week.
@@ -305,7 +309,7 @@ epub_theme = 'djangodocs-epub'
 # The scheme of the identifier. Typical schemes are ISBN or URL.
 #epub_scheme = ''
 
-# The unique identifier of the text. This can be a ISBN number
+# The unique identifier of the text. This can be an ISBN number
 # or the project homepage.
 #epub_identifier = ''
 
@@ -349,3 +353,6 @@ epub_cover = ('', 'epub-cover.html')
 
 # If false, no index is generated.
 #epub_use_index = True
+
+# -- ticket options ------------------------------------------------------------
+ticket_url = 'https://code.djangoproject.com/ticket/%s'

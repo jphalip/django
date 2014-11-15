@@ -1,4 +1,4 @@
-# coding: utf-8
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
 import asyncore
@@ -9,7 +9,7 @@ import smtpd
 import sys
 import tempfile
 import threading
-from smtplib import SMTPException
+from smtplib import SMTPException, SMTP
 from ssl import SSLError
 
 from django.core import mail
@@ -346,31 +346,31 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
         # Regression for #13433 - Make sure that EmailMessage doesn't mangle
         # 'From ' in message body.
         email = EmailMessage('Subject', 'From the future', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
-        self.assertFalse(b'>From the future' in email.message().as_bytes())
+        self.assertNotIn(b'>From the future', email.message().as_bytes())
 
     def test_dont_base64_encode(self):
         # Ticket #3472
         # Shouldn't use Base64 encoding at all
         msg = EmailMessage('Subject', 'UTF-8 encoded body', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
-        self.assertFalse(b'Content-Transfer-Encoding: base64' in msg.message().as_bytes())
+        self.assertNotIn(b'Content-Transfer-Encoding: base64', msg.message().as_bytes())
 
         # Ticket #11212
         # Shouldn't use quoted printable, should detect it can represent content with 7 bit data
         msg = EmailMessage('Subject', 'Body with only ASCII characters.', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
         s = msg.message().as_bytes()
-        self.assertFalse(b'Content-Transfer-Encoding: quoted-printable' in s)
-        self.assertTrue(b'Content-Transfer-Encoding: 7bit' in s)
+        self.assertNotIn(b'Content-Transfer-Encoding: quoted-printable', s)
+        self.assertIn(b'Content-Transfer-Encoding: 7bit', s)
 
         # Shouldn't use quoted printable, should detect it can represent content with 8 bit data
         msg = EmailMessage('Subject', 'Body with latin characters: àáä.', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
         s = msg.message().as_bytes()
-        self.assertFalse(b'Content-Transfer-Encoding: quoted-printable' in s)
-        self.assertTrue(b'Content-Transfer-Encoding: 8bit' in s)
+        self.assertNotIn(b'Content-Transfer-Encoding: quoted-printable', s)
+        self.assertIn(b'Content-Transfer-Encoding: 8bit', s)
 
         msg = EmailMessage('Subject', 'Body with non latin characters: А Б В Г Д Е Ж Ѕ З И І К Л М Н О П.', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
         s = msg.message().as_bytes()
-        self.assertFalse(b'Content-Transfer-Encoding: quoted-printable' in s)
-        self.assertTrue(b'Content-Transfer-Encoding: 8bit' in s)
+        self.assertNotIn(b'Content-Transfer-Encoding: quoted-printable', s)
+        self.assertIn(b'Content-Transfer-Encoding: 8bit', s)
 
     def test_dont_base64_encode_message_rfc822(self):
         # Ticket #18967
@@ -387,7 +387,7 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
         parent_s = parent_msg.message().as_string()
 
         # Verify that the child message header is not base64 encoded
-        self.assertTrue(str('Child Subject') in parent_s)
+        self.assertIn(str('Child Subject'), parent_s)
 
         # Feature test: try attaching email.Message object directly to the mail.
         parent_msg = EmailMessage('Parent Subject', 'Some parent body', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
@@ -395,7 +395,7 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
         parent_s = parent_msg.message().as_string()
 
         # Verify that the child message header is not base64 encoded
-        self.assertTrue(str('Child Subject') in parent_s)
+        self.assertIn(str('Child Subject'), parent_s)
 
         # Feature test: try attaching Django's EmailMessage object directly to the mail.
         parent_msg = EmailMessage('Parent Subject', 'Some parent body', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
@@ -403,7 +403,7 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
         parent_s = parent_msg.message().as_string()
 
         # Verify that the child message header is not base64 encoded
-        self.assertTrue(str('Child Subject') in parent_s)
+        self.assertIn(str('Child Subject'), parent_s)
 
 
 class PythonGlobalState(SimpleTestCase):
@@ -415,19 +415,19 @@ class PythonGlobalState(SimpleTestCase):
 
     def test_utf8(self):
         txt = MIMEText('UTF-8 encoded body', 'plain', 'utf-8')
-        self.assertTrue('Content-Transfer-Encoding: base64' in txt.as_string())
+        self.assertIn('Content-Transfer-Encoding: base64', txt.as_string())
 
     def test_7bit(self):
         txt = MIMEText('Body with only ASCII characters.', 'plain', 'utf-8')
-        self.assertTrue('Content-Transfer-Encoding: base64' in txt.as_string())
+        self.assertIn('Content-Transfer-Encoding: base64', txt.as_string())
 
     def test_8bit_latin(self):
         txt = MIMEText('Body with latin characters: àáä.', 'plain', 'utf-8')
-        self.assertTrue(str('Content-Transfer-Encoding: base64') in txt.as_string())
+        self.assertIn(str('Content-Transfer-Encoding: base64'), txt.as_string())
 
     def test_8bit_non_latin(self):
         txt = MIMEText('Body with non latin characters: А Б В Г Д Е Ж Ѕ З И І К Л М Н О П.', 'plain', 'utf-8')
-        self.assertTrue(str('Content-Transfer-Encoding: base64') in txt.as_string())
+        self.assertIn(str('Content-Transfer-Encoding: base64'), txt.as_string())
 
 
 class BaseEmailBackendTests(HeadersCheckMixin, object):
@@ -855,6 +855,7 @@ class SMTPBackendTests(BaseEmailBackendTests, SimpleTestCase):
 
     @classmethod
     def setUpClass(cls):
+        super(SMTPBackendTests, cls).setUpClass()
         cls.server = FakeSMTPServer(('127.0.0.1', 0), None)
         cls._settings_override = override_settings(
             EMAIL_HOST="127.0.0.1",
@@ -866,6 +867,7 @@ class SMTPBackendTests(BaseEmailBackendTests, SimpleTestCase):
     def tearDownClass(cls):
         cls._settings_override.disable()
         cls.server.stop()
+        super(SMTPBackendTests, cls).tearDownClass()
 
     def setUp(self):
         super(SMTPBackendTests, self).setUp()
@@ -969,6 +971,34 @@ class SMTPBackendTests(BaseEmailBackendTests, SimpleTestCase):
         backend = smtp.EmailBackend()
         self.assertFalse(backend.use_ssl)
 
+    @override_settings(EMAIL_SSL_CERTFILE='foo')
+    def test_email_ssl_certfile_use_settings(self):
+        backend = smtp.EmailBackend()
+        self.assertEqual(backend.ssl_certfile, 'foo')
+
+    @override_settings(EMAIL_SSL_CERTFILE='foo')
+    def test_email_ssl_certfile_override_settings(self):
+        backend = smtp.EmailBackend(ssl_certfile='bar')
+        self.assertEqual(backend.ssl_certfile, 'bar')
+
+    def test_email_ssl_certfile_default_disabled(self):
+        backend = smtp.EmailBackend()
+        self.assertEqual(backend.ssl_certfile, None)
+
+    @override_settings(EMAIL_SSL_KEYFILE='foo')
+    def test_email_ssl_keyfile_use_settings(self):
+        backend = smtp.EmailBackend()
+        self.assertEqual(backend.ssl_keyfile, 'foo')
+
+    @override_settings(EMAIL_SSL_KEYFILE='foo')
+    def test_email_ssl_keyfile_override_settings(self):
+        backend = smtp.EmailBackend(ssl_keyfile='bar')
+        self.assertEqual(backend.ssl_keyfile, 'bar')
+
+    def test_email_ssl_keyfile_default_disabled(self):
+        backend = smtp.EmailBackend()
+        self.assertEqual(backend.ssl_keyfile, None)
+
     @override_settings(EMAIL_USE_TLS=True)
     def test_email_tls_attempts_starttls(self):
         backend = smtp.EmailBackend()
@@ -1005,3 +1035,42 @@ class SMTPBackendTests(BaseEmailBackendTests, SimpleTestCase):
         self.assertEqual(myemailbackend.timeout, 42)
         self.assertEqual(myemailbackend.connection.timeout, 42)
         myemailbackend.close()
+
+    @override_settings(EMAIL_TIMEOUT=10)
+    def test_email_timeout_override_settings(self):
+        backend = smtp.EmailBackend()
+        self.assertEqual(backend.timeout, 10)
+
+    def test_email_msg_uses_crlf(self):
+        """#23063 -- Test that RFC-compliant messages are sent over SMTP."""
+        send = SMTP.send
+        try:
+            smtp_messages = []
+
+            def mock_send(self, s):
+                smtp_messages.append(s)
+                return send(self, s)
+
+            SMTP.send = mock_send
+
+            email = EmailMessage('Subject', 'Content', 'from@example.com', ['to@example.com'])
+            mail.get_connection().send_messages([email])
+
+            # Find the actual message
+            msg = None
+            for i, m in enumerate(smtp_messages):
+                if m[:4] == 'data':
+                    msg = smtp_messages[i + 1]
+                    break
+
+            self.assertTrue(msg)
+
+            if PY3:
+                msg = msg.decode('utf-8')
+            # Ensure that the message only contains CRLF and not combinations of CRLF, LF, and CR.
+            msg = msg.replace('\r\n', '')
+            self.assertNotIn('\r', msg)
+            self.assertNotIn('\n', msg)
+
+        finally:
+            SMTP.send = send

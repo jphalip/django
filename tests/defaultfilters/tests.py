@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 import datetime
 import decimal
 import unittest
+import warnings
 
 from django.template.defaultfilters import (
     add, addslashes, capfirst, center, cut, date, default, default_if_none,
@@ -264,8 +265,12 @@ class DefaultFiltersTests(TestCase):
             '<a href="http://www.google.com" rel="nofollow">www.google.com</a>')
         self.assertEqual(urlize('djangoproject.org'),
             '<a href="http://djangoproject.org" rel="nofollow">djangoproject.org</a>')
+        self.assertEqual(urlize('djangoproject.org/'),
+            '<a href="http://djangoproject.org/" rel="nofollow">djangoproject.org/</a>')
         self.assertEqual(urlize('info@djangoproject.org'),
             '<a href="mailto:info@djangoproject.org">info@djangoproject.org</a>')
+        self.assertEqual(urlize('some.organization'),
+            'some.organization'),
 
         # Check urlize with https addresses
         self.assertEqual(urlize('https://google.com'),
@@ -277,8 +282,8 @@ class DefaultFiltersTests(TestCase):
             '<a href="http://hi.baidu.com/%E9%87%8D%E6%96%B0%E5%BC%80%E5%A7%8B" rel="nofollow">'
             'http://hi.baidu.com/%E9%87%8D%E6%96%B0%E5%BC%80%E5%A7%8B</a>')
         self.assertEqual(urlize('www.mystore.com/30%OffCoupons!'),
-            '<a href="http://www.mystore.com/30%25OffCoupons!" rel="nofollow">'
-            'www.mystore.com/30%OffCoupons!</a>')
+            '<a href="http://www.mystore.com/30%25OffCoupons" rel="nofollow">'
+            'www.mystore.com/30%OffCoupons</a>!')
         self.assertEqual(urlize('http://en.wikipedia.org/wiki/Caf%C3%A9'),
             '<a href="http://en.wikipedia.org/wiki/Caf%C3%A9" rel="nofollow">'
             'http://en.wikipedia.org/wiki/Caf%C3%A9</a>')
@@ -365,21 +370,30 @@ class DefaultFiltersTests(TestCase):
         self.assertEqual(urlize('Email us at "hi@example.com", or phone us at +xx.yy'),
             'Email us at "<a href="mailto:hi@example.com">hi@example.com</a>", or phone us at +xx.yy')
 
+        # Check urlize correctly handles exclamation marks after TLDs or query string - see #23715
+        self.assertEqual(urlize('Go to djangoproject.com! and enjoy.'),
+            'Go to <a href="http://djangoproject.com" rel="nofollow">djangoproject.com</a>! and enjoy.')
+        self.assertEqual(urlize('Search for google.com/?q=! and see.'),
+            'Search for <a href="http://google.com/?q=" rel="nofollow">google.com/?q=</a>! and see.')
+        self.assertEqual(urlize('Search for google.com/?q=dj!`? and see.'),
+            'Search for <a href="http://google.com/?q=dj%21%60%3F" rel="nofollow">google.com/?q=dj!`?</a> and see.')
+        self.assertEqual(urlize('Search for google.com/?q=dj!`?! and see.'),
+            'Search for <a href="http://google.com/?q=dj%21%60%3F" rel="nofollow">google.com/?q=dj!`?</a>! and see.')
+
     def test_wordcount(self):
         self.assertEqual(wordcount(''), 0)
         self.assertEqual(wordcount('oneword'), 1)
         self.assertEqual(wordcount('lots of words'), 3)
 
+    def test_wordwrap(self):
         self.assertEqual(wordwrap('this is a long paragraph of text that '
-            'really needs to be wrapped I\'m afraid', 14),
-            "this is a long\nparagraph of\ntext that\nreally needs\nto be "
+            "really needs to be wrapped I'm afraid", 14),
+            'this is a long\nparagraph of\ntext that\nreally needs\nto be '
             "wrapped\nI'm afraid")
-
         self.assertEqual(wordwrap('this is a short paragraph of text.\n  '
             'But this line should be indented', 14),
             'this is a\nshort\nparagraph of\ntext.\n  But this\nline '
             'should be\nindented')
-
         self.assertEqual(wordwrap('this is a short paragraph of text.\n  '
             'But this line should be indented', 15), 'this is a short\n'
             'paragraph of\ntext.\n  But this line\nshould be\nindented')
@@ -429,9 +443,13 @@ class DefaultFiltersTests(TestCase):
                          'line 1<br />line 2')
 
     def test_removetags(self):
-        self.assertEqual(removetags('some <b>html</b> with <script>alert'
-            '("You smell")</script> disallowed <img /> tags', 'script img'),
-            'some <b>html</b> with alert("You smell") disallowed  tags')
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            self.assertEqual(removetags('some <b>html</b> with <script>alert'
+                '("You smell")</script> disallowed <img /> tags', 'script img'),
+                'some <b>html</b> with alert("You smell") disallowed  tags')
+
+    def test_striptags(self):
         self.assertEqual(striptags('some <b>html</b> with <script>alert'
             '("You smell")</script> disallowed <img /> tags'),
             'some html with alert("You smell") disallowed  tags')
@@ -545,21 +563,30 @@ class DefaultFiltersTests(TestCase):
         b = ULItem('b')
         self.assertEqual(unordered_list([a, b]), '\t<li>ulitem-a</li>\n\t<li>ulitem-b</li>')
 
+        def item_generator():
+            yield a
+            yield b
+
+        self.assertEqual(unordered_list(item_generator()), '\t<li>ulitem-a</li>\n\t<li>ulitem-b</li>')
+
         # Old format for unordered lists should still work
-        self.assertEqual(unordered_list(['item 1', []]), '\t<li>item 1</li>')
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
 
-        self.assertEqual(unordered_list(['item 1', [['item 1.1', []]]]),
-            '\t<li>item 1\n\t<ul>\n\t\t<li>item 1.1</li>\n\t</ul>\n\t</li>')
+            self.assertEqual(unordered_list(['item 1', []]), '\t<li>item 1</li>')
 
-        self.assertEqual(unordered_list(['item 1', [['item 1.1', []],
-            ['item 1.2', []]]]), '\t<li>item 1\n\t<ul>\n\t\t<li>item 1.1'
-            '</li>\n\t\t<li>item 1.2</li>\n\t</ul>\n\t</li>')
+            self.assertEqual(unordered_list(['item 1', [['item 1.1', []]]]),
+                '\t<li>item 1\n\t<ul>\n\t\t<li>item 1.1</li>\n\t</ul>\n\t</li>')
 
-        self.assertEqual(unordered_list(['States', [['Kansas', [['Lawrence',
-            []], ['Topeka', []]]], ['Illinois', []]]]), '\t<li>States\n\t'
-            '<ul>\n\t\t<li>Kansas\n\t\t<ul>\n\t\t\t<li>Lawrence</li>'
-            '\n\t\t\t<li>Topeka</li>\n\t\t</ul>\n\t\t</li>\n\t\t<li>'
-            'Illinois</li>\n\t</ul>\n\t</li>')
+            self.assertEqual(unordered_list(['item 1', [['item 1.1', []],
+                ['item 1.2', []]]]), '\t<li>item 1\n\t<ul>\n\t\t<li>item 1.1'
+                '</li>\n\t\t<li>item 1.2</li>\n\t</ul>\n\t</li>')
+
+            self.assertEqual(unordered_list(['States', [['Kansas', [['Lawrence',
+                []], ['Topeka', []]]], ['Illinois', []]]]), '\t<li>States\n\t'
+                '<ul>\n\t\t<li>Kansas\n\t\t<ul>\n\t\t\t<li>Lawrence</li>'
+                '\n\t\t\t<li>Topeka</li>\n\t\t</ul>\n\t\t</li>\n\t\t<li>'
+                'Illinois</li>\n\t</ul>\n\t</li>')
 
     def test_add(self):
         self.assertEqual(add('1', '2'), 3)
@@ -655,6 +682,14 @@ class DefaultFiltersTests(TestCase):
         self.assertEqual(pluralize(1), '')
         self.assertEqual(pluralize(0), 's')
         self.assertEqual(pluralize(2), 's')
+
+        # Ticket #22798
+        self.assertEqual(pluralize(0.5), 's')
+        self.assertEqual(pluralize(1.5), 's')
+
+        self.assertEqual(pluralize(decimal.Decimal(1)), '')
+        self.assertEqual(pluralize(decimal.Decimal(0)), 's')
+        self.assertEqual(pluralize(decimal.Decimal(2)), 's')
         self.assertEqual(pluralize([1]), '')
         self.assertEqual(pluralize([]), 's')
         self.assertEqual(pluralize([1, 2, 3]), 's')
@@ -692,7 +727,9 @@ class DefaultFiltersTests(TestCase):
         self.assertEqual(escape(123), '123')
         self.assertEqual(linebreaks_filter(123), '<p>123</p>')
         self.assertEqual(linebreaksbr(123), '123')
-        self.assertEqual(removetags(123, 'a'), '123')
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            self.assertEqual(removetags(123, 'a'), '123')
         self.assertEqual(striptags(123), '123')
 
 

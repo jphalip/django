@@ -1,4 +1,7 @@
+from __future__ import unicode_literals
+
 from django.db import migrations
+from django.apps.registry import apps as global_apps
 from .loader import MigrationLoader
 from .recorder import MigrationRecorder
 
@@ -69,7 +72,7 @@ class MigrationExecutor(object):
         statements = []
         for migration, backwards in plan:
             with self.connection.schema_editor(collect_sql=True) as schema_editor:
-                project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=False)
+                project_state = self.loader.project_state((migration.app_label, migration.name), at_end=False)
                 if not backwards:
                     migration.apply(project_state, schema_editor, collect_sql=True)
                 else:
@@ -90,7 +93,7 @@ class MigrationExecutor(object):
             else:
                 # Alright, do it normally
                 with self.connection.schema_editor() as schema_editor:
-                    project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=False)
+                    project_state = self.loader.project_state((migration.app_label, migration.name), at_end=False)
                     migration.apply(project_state, schema_editor)
         # For replacement migrations, record individual statuses
         if migration.replaces:
@@ -110,7 +113,7 @@ class MigrationExecutor(object):
             self.progress_callback("unapply_start", migration, fake)
         if not fake:
             with self.connection.schema_editor() as schema_editor:
-                project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=False)
+                project_state = self.loader.project_state((migration.app_label, migration.name), at_end=False)
                 migration.unapply(project_state, schema_editor)
         # For replacement migrations, record individual statuses
         if migration.replaces:
@@ -128,13 +131,23 @@ class MigrationExecutor(object):
         tables it would create exist. This is intended only for use
         on initial migrations (as it only looks for CreateModel).
         """
-        project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=True)
+        project_state = self.loader.project_state((migration.app_label, migration.name), at_end=True)
         apps = project_state.render()
+        found_create_migration = False
+        # Bail if the migration isn't the first one in its app
+        if [name for app, name in migration.dependencies if app == migration.app_label]:
+            return False
+        # Make sure all create model are done
         for operation in migration.operations:
             if isinstance(operation, migrations.CreateModel):
                 model = apps.get_model(migration.app_label, operation.name)
-                if model._meta.db_table not in self.connection.introspection.get_table_list(self.connection.cursor()):
+                if model._meta.swapped:
+                    # We have to fetch the model to test with from the
+                    # main app cache, as it's not a direct dependency.
+                    model = global_apps.get_model(model._meta.swapped)
+                if model._meta.db_table not in self.connection.introspection.table_names(self.connection.cursor()):
                     return False
-            else:
-                return False
-        return True
+                found_create_migration = True
+        # If we get this far and we found at least one CreateModel migration,
+        # the migration is considered implicitly applied.
+        return found_create_migration

@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 
+from django.core.exceptions import PermissionDenied
 from django.core.mail import send_mail
 from django.core import validators
 from django.db import models
@@ -31,8 +32,7 @@ class PermissionManager(models.Manager):
     def get_by_natural_key(self, codename, app_label, model):
         return self.get(
             codename=codename,
-            content_type=ContentType.objects.get_by_natural_key(app_label,
-                                                                model),
+            content_type=ContentType.objects.db_manager(self.db).get_by_natural_key(app_label, model),
         )
 
 
@@ -60,7 +60,7 @@ class Permission(models.Model):
     Three basic permissions -- add, change and delete -- are automatically
     created for each Django model.
     """
-    name = models.CharField(_('name'), max_length=50)
+    name = models.CharField(_('name'), max_length=255)
     content_type = models.ForeignKey(ContentType)
     codename = models.CharField(_('codename'), max_length=100)
     objects = PermissionManager()
@@ -172,7 +172,7 @@ class UserManager(BaseUserManager):
         email = self.normalize_email(email)
         user = self.model(username=username, email=email,
                           is_staff=is_staff, is_active=True,
-                          is_superuser=is_superuser, last_login=now,
+                          is_superuser=is_superuser,
                           date_joined=now, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -190,7 +190,7 @@ class UserManager(BaseUserManager):
 @python_2_unicode_compatible
 class AbstractBaseUser(models.Model):
     password = models.CharField(_('password'), max_length=128)
-    last_login = models.DateTimeField(_('last login'), default=timezone.now)
+    last_login = models.DateTimeField(_('last login'), blank=True, null=True)
 
     is_active = True
 
@@ -267,18 +267,32 @@ def _user_get_all_permissions(user, obj):
 
 
 def _user_has_perm(user, perm, obj):
+    """
+    A backend can raise `PermissionDenied` to short-circuit permission checking.
+    """
     for backend in auth.get_backends():
-        if hasattr(backend, "has_perm"):
+        if not hasattr(backend, 'has_perm'):
+            continue
+        try:
             if backend.has_perm(user, perm, obj):
                 return True
+        except PermissionDenied:
+            return False
     return False
 
 
 def _user_has_module_perms(user, app_label):
+    """
+    A backend can raise `PermissionDenied` to short-circuit permission checking.
+    """
     for backend in auth.get_backends():
-        if hasattr(backend, "has_module_perms"):
+        if not hasattr(backend, 'has_module_perms'):
+            continue
+        try:
             if backend.has_module_perms(user, app_label):
                 return True
+        except PermissionDenied:
+            return False
     return False
 
 
@@ -293,7 +307,7 @@ class PermissionsMixin(models.Model):
     groups = models.ManyToManyField(Group, verbose_name=_('groups'),
         blank=True, help_text=_('The groups this user belongs to. A user will '
                                 'get all permissions granted to each of '
-                                'his/her group.'),
+                                'their groups.'),
         related_name="user_set", related_query_name="user")
     user_permissions = models.ManyToManyField(Permission,
         verbose_name=_('user permissions'), blank=True,
@@ -305,7 +319,7 @@ class PermissionsMixin(models.Model):
 
     def get_group_permissions(self, obj=None):
         """
-        Returns a list of permission strings that this user has through his/her
+        Returns a list of permission strings that this user has through their
         groups. This method queries all available auth backends. If an object
         is passed in, only permissions matching this object are returned.
         """
@@ -368,8 +382,14 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
         help_text=_('Required. 30 characters or fewer. Letters, digits and '
                     '@/./+/-/_ only.'),
         validators=[
-            validators.RegexValidator(r'^[\w.@+-]+$', _('Enter a valid username.'), 'invalid')
-        ])
+            validators.RegexValidator(r'^[\w.@+-]+$',
+                                      _('Enter a valid username. '
+                                        'This value may contain only letters, numbers '
+                                        'and @/./+/-/_ characters.'), 'invalid'),
+        ],
+        error_messages={
+            'unique': _("A user with that username already exists."),
+        })
     first_name = models.CharField(_('first name'), max_length=30, blank=True)
     last_name = models.CharField(_('last name'), max_length=30, blank=True)
     email = models.EmailField(_('email address'), blank=True)
@@ -489,3 +509,6 @@ class AnonymousUser(object):
 
     def is_authenticated(self):
         return False
+
+    def get_username(self):
+        return self.username

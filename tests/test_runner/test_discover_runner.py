@@ -104,18 +104,27 @@ class DiscoverRunnerTest(TestCase):
         self.assertEqual(count, 0)
 
     def test_testcase_ordering(self):
-        suite = DiscoverRunner().build_suite(["test_discovery_sample/"])
-        tc_names = [case.__class__.__name__ for case in suite._tests]
-        self.assertEqual(
-            suite._tests[0].__class__.__name__,
-            'TestDjangoTestCase',
-            msg="TestDjangoTestCase should be the first test case")
-        self.assertEqual(
-            suite._tests[1].__class__.__name__,
-            'TestZimpleTestCase',
-            msg="TestZimpleTestCase should be the second test case")
-        # All others can follow in unspecified order, including doctests
-        self.assertIn('DocTestCase', [t.__class__.__name__ for t in suite._tests[2:]])
+        with change_cwd(".."):
+            suite = DiscoverRunner().build_suite(["test_discovery_sample/"])
+            self.assertEqual(
+                suite._tests[0].__class__.__name__,
+                'TestDjangoTestCase',
+                msg="TestDjangoTestCase should be the first test case")
+            self.assertEqual(
+                suite._tests[1].__class__.__name__,
+                'TestZimpleTestCase',
+                msg="TestZimpleTestCase should be the second test case")
+            # All others can follow in unspecified order, including doctests
+            self.assertIn('DocTestCase', [t.__class__.__name__ for t in suite._tests[2:]])
+
+    def test_duplicates_ignored(self):
+        """
+        Tests shouldn't be discovered twice when discovering on overlapping paths.
+        """
+        single = DiscoverRunner().build_suite(["django.contrib.gis"]).countTestCases()
+        dups = DiscoverRunner().build_suite(
+            ["django.contrib.gis", "django.contrib.gis.tests.geo3d"]).countTestCases()
+        self.assertEqual(single, dups)
 
     def test_overrideable_test_suite(self):
         self.assertEqual(DiscoverRunner().test_suite, TestSuite)

@@ -1,3 +1,7 @@
+from __future__ import unicode_literals
+from django.db import router
+
+
 class Operation(object):
     """
     Base class for migration operations.
@@ -20,6 +24,10 @@ class Operation(object):
 
     # Can this migration be represented as SQL? (things like RunPython cannot)
     reduces_to_sql = True
+
+    # Should this operation be forced as atomic even on backends with no
+    # DDL transaction support (i.e., does it have no DDL, like RunPython)
+    atomic = False
 
     serialization_expand_args = []
 
@@ -89,6 +97,18 @@ class Operation(object):
         Used for optimization. If in doubt, return True.
         """
         return self.references_model(model_name, app_label)
+
+    def allowed_to_migrate(self, connection_alias, model):
+        """
+        Returns if we're allowed to migrate the model. Checks the router,
+        if it's a proxy, if it's managed, and if it's swapped out.
+        """
+        return (
+            router.allow_migrate(connection_alias, model) and
+            not model._meta.proxy and
+            not model._meta.swapped and
+            model._meta.managed
+        )
 
     def __repr__(self):
         return "<%s %s%s>" % (

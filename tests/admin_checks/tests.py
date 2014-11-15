@@ -407,9 +407,9 @@ class SystemChecksTestCase(TestCase):
         errors = SongAdmin.check(model=Song)
         self.assertEqual(errors, [])
 
-    def test_nonexistant_field(self):
+    def test_nonexistent_field(self):
         class SongAdmin(admin.ModelAdmin):
-            readonly_fields = ("title", "nonexistant")
+            readonly_fields = ("title", "nonexistent")
 
         errors = SongAdmin.check(model=Song)
         expected = [
@@ -423,7 +423,7 @@ class SystemChecksTestCase(TestCase):
         ]
         self.assertEqual(errors, expected)
 
-    def test_nonexistant_field_on_inline(self):
+    def test_nonexistent_field_on_inline(self):
         class CityInline(admin.TabularInline):
             model = City
             readonly_fields = ['i_dont_exist']  # Missing attribute

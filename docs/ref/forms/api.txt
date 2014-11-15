@@ -71,6 +71,12 @@ should consider its data immutable, whether it has data or not.
 Using forms to validate data
 ----------------------------
 
+.. method:: Form.clean()
+
+Implement a ``clean()`` method on your ``Form`` when you must add custom
+validation for fields that are interdependent. See
+:ref:`validating-fields-with-clean` for example usage.
+
 .. method:: Form.is_valid()
 
 The primary task of a :class:`Form` object is to validate data. With a bound
@@ -250,6 +256,33 @@ precedence::
     <tr><th>Url:</th><td><input type="url" name="url" /></td></tr>
     <tr><th>Comment:</th><td><input type="text" name="comment" /></td></tr>
 
+Checking if form data has changed
+---------------------------------
+
+.. method:: Form.has_changed()
+
+Use the ``has_changed()`` method on your ``Form`` when you need to check if the
+form data has been changed from the initial data.
+
+    >>> data = {'subject': 'hello',
+    ...         'message': 'Hi there',
+    ...         'sender': 'foo@example.com',
+    ...         'cc_myself': True}
+    >>> f = ContactForm(initial=data)
+    >>> f.has_changed()
+    False
+
+When the form is submitted, we reconstruct it and provide the original data
+so that the comparison can be done:
+
+    >>> f = ContactForm(request.POST, initial=data)
+    >>> f.has_changed()
+
+``has_changed()`` will be ``True`` if the data from ``request.POST`` differs
+from what was provided in :attr:`~Form.initial` or ``False`` otherwise. The
+result is computed by calling :meth:`Field.has_changed` for each field in the
+form.
+
 Accessing the fields from the form
 ----------------------------------
 
@@ -376,6 +409,8 @@ You can write code to perform validation for particular form fields (based on
 their name) or for the form as a whole (considering combinations of various
 fields). More information about this is in :doc:`/ref/forms/validation`.
 
+.. _ref-forms-api-outputting-html:
+
 Outputting forms as HTML
 ------------------------
 
@@ -491,6 +526,8 @@ it calls its ``as_table()`` method behind the scenes::
     <tr><th><label for="id_message">Message:</label></th><td><input type="text" name="message" id="id_message" /></td></tr>
     <tr><th><label for="id_sender">Sender:</label></th><td><input type="email" name="sender" id="id_sender" /></td></tr>
     <tr><th><label for="id_cc_myself">Cc myself:</label></th><td><input type="checkbox" name="cc_myself" id="id_cc_myself" /></td></tr>
+
+.. _ref-forms-api-styling-form-rows:
 
 Styling required or erroneous form rows
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -652,8 +689,13 @@ Note that the label suffix is added only if the last character of the
 label isn't a punctuation character (in English, those are ``.``, ``!``, ``?``
 or ``:``).
 
-You can also customize the ``label_suffix`` on a per-field basis using the
-``label_suffix`` parameter to :meth:`~django.forms.BoundField.label_tag`.
+.. versionadded:: 1.8
+
+Fields can also define their own :attr:`~django.forms.Field.label_suffix`.
+This will take precedence over :attr:`Form.label_suffix
+<django.forms.Form.label_suffix>`. The suffix can also be overridden at runtime
+using the ``label_suffix`` parameter to
+:meth:`~django.forms.BoundField.label_tag`.
 
 Notes on field ordering
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -799,12 +841,12 @@ auto-generated label tag. An optional ``attrs`` dictionary may contain
 additional attributes for the ``<label>`` tag.
 
 The HTML that's generated includes the form's
-:attr:`~django.forms.Form.label_suffix` (a colon, by default). The optional
-``label_suffix`` parameter allows you to override the form's
-:attr:`~django.forms.Form.label_suffix`. For example, you can use an empty
-string to hide the label on selected fields. If you need to do this in a
-template, you could write a custom filter to allow passing parameters to
-``label_tag``.
+:attr:`~django.forms.Form.label_suffix` (a colon, by default) or, if set, the
+current field's :attr:`~django.forms.Field.label_suffix`. The optional
+``label_suffix`` parameter allows you to override any previously set
+suffix. For example, you can use an empty string to hide the label on selected
+fields. If you need to do this in a template, you could write a custom
+filter to allow passing parameters to ``label_tag``.
 
 .. versionchanged:: 1.8
 
@@ -905,7 +947,7 @@ form data)::
 Constructing an unbound form is the same as always -- just omit both
 form data *and* file data::
 
-    # Unbound form with a image field
+    # Unbound form with an image field
     >>> f = ContactFormWithMugshot()
 
 Testing for multipart forms
@@ -977,10 +1019,20 @@ classes::
 
 .. versionadded:: 1.7
 
-* It's possible to opt-out from a ``Field`` inherited from a parent class by
-  shadowing it. While any non-``Field`` value works for this purpose, it's
-  recommended to use ``None`` to make it explicit that a field is being
-  nullified.
+* It's possible to declaratively remove a ``Field`` inherited from a parent
+  class by setting the name to be ``None`` on the subclass. For example::
+
+    >>> from django import forms
+
+    >>> class ParentForm(forms.Form):
+    ...     name = forms.CharField()
+    ...     age = forms.IntegerField()
+
+    >>> class ChildForm(ParentForm):
+    ...     name = None
+
+    >>> ChildForm().fields.keys()
+    ... ['age']
 
 .. _form-prefix:
 

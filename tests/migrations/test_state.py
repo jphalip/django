@@ -3,6 +3,8 @@ from django.db import models
 from django.db.migrations.state import ProjectState, ModelState, InvalidBasesError
 from django.test import TestCase
 
+from .models import ModelWithCustomBase
+
 
 class StateTests(TestCase):
     """
@@ -64,7 +66,7 @@ class StateTests(TestCase):
         self.assertEqual(author_state.fields[1][1].max_length, 255)
         self.assertEqual(author_state.fields[2][1].null, False)
         self.assertEqual(author_state.fields[3][1].null, True)
-        self.assertEqual(author_state.options, {"unique_together": set([("name", "bio")]), "index_together": set([("bio", "age")])})
+        self.assertEqual(author_state.options, {"unique_together": {("name", "bio")}, "index_together": {("bio", "age")}})
         self.assertEqual(author_state.bases, (models.Model, ))
 
         self.assertEqual(book_state.app_label, "migrations")
@@ -252,6 +254,27 @@ class StateTests(TestCase):
         with self.assertRaises(InvalidBasesError):
             project_state.render()
 
+    def test_render_unique_app_labels(self):
+        """
+        Tests that the ProjectState render method doesn't raise an
+        ImproperlyConfigured exception about unique labels if two dotted app
+        names have the same last part.
+        """
+        class A(models.Model):
+            class Meta:
+                app_label = "django.contrib.auth"
+
+        class B(models.Model):
+            class Meta:
+                app_label = "vendor.auth"
+
+        # Make a ProjectState and render it
+        project_state = ProjectState()
+        project_state.add_model_state(ModelState.from_model(A))
+        project_state.add_model_state(ModelState.from_model(B))
+        final_apps = project_state.render()
+        self.assertEqual(len(final_apps.get_models()), 2)
+
     def test_equality(self):
         """
         Tests that == and != are implemented correctly.
@@ -291,3 +314,140 @@ class StateTests(TestCase):
         ))
         self.assertNotEqual(project_state, other_state)
         self.assertEqual(project_state == other_state, False)
+
+    def test_dangling_references_throw_error(self):
+        new_apps = Apps()
+
+        class Author(models.Model):
+            name = models.TextField()
+
+            class Meta:
+                app_label = "migrations"
+                apps = new_apps
+
+        class Book(models.Model):
+            author = models.ForeignKey(Author)
+
+            class Meta:
+                app_label = "migrations"
+                apps = new_apps
+
+        class Magazine(models.Model):
+            authors = models.ManyToManyField(Author)
+
+            class Meta:
+                app_label = "migrations"
+                apps = new_apps
+
+        # Make a valid ProjectState and render it
+        project_state = ProjectState()
+        project_state.add_model_state(ModelState.from_model(Author))
+        project_state.add_model_state(ModelState.from_model(Book))
+        project_state.add_model_state(ModelState.from_model(Magazine))
+        rendered_state = project_state.render()
+        self.assertEqual(len(rendered_state.get_models()), 3)
+
+        # now make an invalid one with a ForeignKey
+        project_state = ProjectState()
+        project_state.add_model_state(ModelState.from_model(Book))
+        with self.assertRaises(ValueError):
+            rendered_state = project_state.render()
+
+        # and another with ManyToManyField
+        project_state = ProjectState()
+        project_state.add_model_state(ModelState.from_model(Magazine))
+        with self.assertRaises(ValueError):
+            rendered_state = project_state.render()
+
+    def test_real_apps(self):
+        """
+        Tests that including real apps can resolve dangling FK errors.
+        This test relies on the fact that contenttypes is always loaded.
+        """
+        new_apps = Apps()
+
+        class TestModel(models.Model):
+            ct = models.ForeignKey("contenttypes.ContentType")
+
+            class Meta:
+                app_label = "migrations"
+                apps = new_apps
+
+        # If we just stick it into an empty state it should fail
+        project_state = ProjectState()
+        project_state.add_model_state(ModelState.from_model(TestModel))
+        with self.assertRaises(ValueError):
+            project_state.render()
+
+        # If we include the real app it should succeed
+        project_state = ProjectState(real_apps=["contenttypes"])
+        project_state.add_model_state(ModelState.from_model(TestModel))
+        rendered_state = project_state.render()
+        self.assertEqual(
+            len([x for x in rendered_state.get_models() if x._meta.app_label == "migrations"]),
+            1,
+        )
+
+    def test_ignore_order_wrt(self):
+        """
+        Makes sure ProjectState doesn't include OrderWrt fields when
+        making from existing models.
+        """
+        new_apps = Apps()
+
+        class Author(models.Model):
+            name = models.TextField()
+
+            class Meta:
+                app_label = "migrations"
+                apps = new_apps
+
+        class Book(models.Model):
+            author = models.ForeignKey(Author)
+
+            class Meta:
+                app_label = "migrations"
+                apps = new_apps
+                order_with_respect_to = "author"
+
+        # Make a valid ProjectState and render it
+        project_state = ProjectState()
+        project_state.add_model_state(ModelState.from_model(Author))
+        project_state.add_model_state(ModelState.from_model(Book))
+        self.assertEqual(
+            [name for name, field in project_state.models["migrations", "book"].fields],
+            ["id", "author"],
+        )
+
+
+class ModelStateTests(TestCase):
+    def test_custom_model_base(self):
+        state = ModelState.from_model(ModelWithCustomBase)
+        self.assertEqual(state.bases, (models.Model,))
+
+    def test_bound_field_sanity_check(self):
+        field = models.CharField(max_length=1)
+        field.model = models.Model
+        with self.assertRaisesMessage(ValueError,
+                'ModelState.fields cannot be bound to a model - "field" is.'):
+            ModelState('app', 'Model', [('field', field)])
+
+    def test_fields_immutability(self):
+        """
+        Tests that rendering a model state doesn't alter its internal fields.
+        """
+        apps = Apps()
+        field = models.CharField(max_length=1)
+        state = ModelState('app', 'Model', [('name', field)])
+        Model = state.render(apps)
+        self.assertNotEqual(Model._meta.get_field('name'), field)
+
+    def test_repr(self):
+        field = models.CharField(max_length=1)
+        state = ModelState('app', 'Model', [('name', field)], bases=['app.A', 'app.B', 'app.C'])
+        self.assertEqual(repr(state), "<ModelState: 'app.Model'>")
+
+        project_state = ProjectState()
+        project_state.add_model_state(state)
+        with self.assertRaisesMessage(InvalidBasesError, "Cannot resolve bases for [<ModelState: 'app.Model'>]"):
+            project_state.render()

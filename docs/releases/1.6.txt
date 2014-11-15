@@ -168,7 +168,7 @@ Minor features
   :setting:`CSRF_COOKIE_HTTPONLY`.
 
 * The :meth:`~django.test.TransactionTestCase.assertQuerysetEqual` now checks
-  for undefined order and raises :exc:`~exceptions.ValueError` if undefined
+  for undefined order and raises :exc:`ValueError` if undefined
   order is spotted. The order is seen as undefined if the given ``QuerySet``
   isn't ordered and there are more than one ordered values to compare against.
 
@@ -380,7 +380,7 @@ Backwards incompatible changes in 1.6
 .. warning::
 
     In addition to the changes outlined in this section, be sure to review the
-    :doc:`deprecation plan </internals/deprecation>` for any features that
+    :ref:`deprecation plan <deprecation-removed-in-1.6>` for any features that
     have been removed. If you haven't updated your code within the
     deprecation timeline for a given feature, its removal may appear as a
     backwards incompatible change.
@@ -453,7 +453,7 @@ to the item above about changes in the test runners:
 The ``django.contrib.gis.tests.GeoDjangoTestSuiteRunner`` test runner has been
 removed and the standalone GeoDjango tests execution setup it implemented isn't
 supported anymore. To run the GeoDjango tests simply use the new
-``DicoverRunner`` and specify the ``django.contrib.gis`` app.
+``DiscoverRunner`` and specify the ``django.contrib.gis`` app.
 
 Custom User models in tests
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -491,7 +491,7 @@ pytz_. If you're using MySQL, you must install pytz_ and load the time zone
 tables with `mysql_tzinfo_to_sql`_.
 
 .. _pytz: http://pytz.sourceforge.net/
-.. _mysql_tzinfo_to_sql: http://dev.mysql.com/doc/refman/5.5/en/mysql-tzinfo-to-sql.html
+.. _mysql_tzinfo_to_sql: http://dev.mysql.com/doc/refman/5.6/en/mysql-tzinfo-to-sql.html
 
 Addition of ``QuerySet.datetimes()``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1021,7 +1021,7 @@ tags render their arguments as-is.
 Django 1.6 starts a process to correct this inconsistency. The ``future``
 template library provides alternate implementations of :ttag:`cycle` and
 :ttag:`firstof` that autoescape their inputs. If you're using these tags,
-you're encourage to include the following line at the top of your templates to
+you're encouraged to include the following line at the top of your templates to
 enable the new behavior::
 
     {% load cycle from future %}
@@ -1099,6 +1099,26 @@ a regular deprecation path.
 Methods that return a ``QuerySet`` such as ``Manager.get_query_set`` or
 ``ModelAdmin.queryset`` have been renamed to ``get_queryset``.
 
+If you are writing a library that implements, for example, a
+``Manager.get_query_set`` method, and you need to support old Django versions,
+you should rename the method and conditionally add an alias with the old name::
+
+    class CustomManager(models.Manager):
+        def get_queryset(self):
+            pass # ...
+
+        if django.VERSION < (1, 6):
+            get_query_set = get_queryset
+
+        # For Django >= 1.6, models.Manager provides a get_query_set fallback
+        # that emits a warning when used.
+
+If you are writing a library that needs to call the ``get_queryset`` method and
+must support old Django versions, you should write::
+
+    method = getattr(some_manager, 'get_queryset', some_manager.get_query_set)
+    method(params)
+
 ``shortcut`` view and URLconf
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1163,7 +1183,7 @@ create a ``ModelForm`` that uses all fields for a model.
 For this reason, if you use these views for editing models, you must also supply
 the ``fields`` attribute (new in Django 1.6), which is a list of model fields
 and works in the same way as the :class:`~django.forms.ModelForm`
-``Meta.fields`` attribute. Alternatively, you can set set the ``form_class``
+``Meta.fields`` attribute. Alternatively, you can set the ``form_class``
 attribute to a ``ModelForm`` that explicitly defines the fields to be used.
 Defining an ``UpdateView`` or ``CreateView`` subclass to be used with a model
 but without an explicit list of fields is deprecated.

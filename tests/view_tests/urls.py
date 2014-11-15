@@ -1,9 +1,9 @@
-# coding: utf-8
+# -*- coding: utf-8 -*-
 from os import path
 
 from django.conf.urls import url, include
 from django.utils._os import upath
-from django.views import defaults, i18n
+from django.views import defaults, i18n, static
 
 from . import views
 
@@ -57,6 +57,9 @@ urlpatterns = [
     url(r'raises404/$', views.raises404),
     url(r'raises500/$', views.raises500),
 
+    url(r'technical404/$', views.technical404, name="my404"),
+    url(r'classbased404/$', views.Http404View.as_view()),
+
     # i18n views
     url(r'^i18n/', include('django.conf.urls.i18n')),
     url(r'^jsi18n/$', i18n.javascript_catalog, js_info_dict),
@@ -68,12 +71,12 @@ urlpatterns = [
     url(r'^jsi18n_template/$', views.jsi18n),
 
     # Static views
-    url(r'^site_media/(?P<path>.*)$', 'django.views.static.serve', {'document_root': media_dir}),
+    url(r'^site_media/(?P<path>.*)$', static.serve, {'document_root': media_dir}),
 ]
 
 urlpatterns += [
-    url(r'view_exception/(?P<n>\d+)/$', views.view_exception, name='view_exception'),
-    url(r'template_exception/(?P<n>\d+)/$', views.template_exception, name='template_exception'),
+    url(r'view_exception/(?P<n>[0-9]+)/$', views.view_exception, name='view_exception'),
+    url(r'template_exception/(?P<n>[0-9]+)/$', views.template_exception, name='template_exception'),
     url(r'^raises_template_does_not_exist/(?P<path>.+)$', views.raises_template_does_not_exist, name='raises_template_does_not_exist'),
     url(r'^render_no_template/$', views.render_no_template, name='render_no_template'),
 ]

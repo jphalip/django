@@ -7,7 +7,6 @@ from __future__ import unicode_literals
 import os
 import itertools
 
-from django.conf import settings
 from django.core.urlresolvers import reverse, NoReverseMatch
 from django.template import (TemplateSyntaxError,
     Context, Template, loader)
@@ -804,11 +803,6 @@ class AssertFormsetErrorTests(TestCase):
                                     **kwargs)
 
 
-class ProcessedMiddleware(object):
-    def process_request(self, request):
-        request.has_been_processed = True
-
-
 @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',),
                    ROOT_URLCONF='test_client_regress.urls',)
 class LoginTests(TestCase):
@@ -829,24 +823,6 @@ class LoginTests(TestCase):
         # Check that assertRedirects uses the original client, not the
         # default client.
         self.assertRedirects(response, "http://testserver/get_view/")
-
-    @override_settings(
-        MIDDLEWARE_CLASSES=list(settings.MIDDLEWARE_CLASSES) +
-        ['test_client_regress.tests.ProcessedMiddleware'])
-    def test_request_middleware(self):
-        "Check that the request middleware is executed on login request"
-
-        def listener(sender, signal, **kwargs):
-            request = kwargs['request']
-            self.assertTrue(hasattr(request, 'has_been_processed'))
-
-        # Unlike other Client request performing methods, login and logout don't
-        # return the response, therefore we must use signals to get it
-        user_logged_in.connect(listener)
-        try:
-            self.client.login(username='testclient', password='password')
-        finally:
-            user_logged_in.disconnect(listener)
 
 
 @override_settings(
@@ -979,7 +955,7 @@ class ContextTests(TestCase):
         "Context variables can be retrieved from a single context"
         response = self.client.get("/request_data/", data={'foo': 'whiz'})
         self.assertEqual(response.context.__class__, Context)
-        self.assertTrue('get-foo' in response.context)
+        self.assertIn('get-foo', response.context)
         self.assertEqual(response.context['get-foo'], 'whiz')
         self.assertEqual(response.context['request-foo'], 'whiz')
         self.assertEqual(response.context['data'], 'sausage')
@@ -995,7 +971,7 @@ class ContextTests(TestCase):
         response = self.client.get("/request_data_extended/", data={'foo': 'whiz'})
         self.assertEqual(response.context.__class__, ContextList)
         self.assertEqual(len(response.context), 2)
-        self.assertTrue('get-foo' in response.context)
+        self.assertIn('get-foo', response.context)
         self.assertEqual(response.context['get-foo'], 'whiz')
         self.assertEqual(response.context['request-foo'], 'whiz')
         self.assertEqual(response.context['data'], 'bacon')
@@ -1017,8 +993,8 @@ class ContextTests(TestCase):
         l = ContextList([c1, c2])
         # None, True and False are builtins of BaseContext, and present
         # in every Context without needing to be added.
-        self.assertEqual(set(['None', 'True', 'False', 'hello', 'goodbye',
-                              'python', 'dolly']),
+        self.assertEqual({'None', 'True', 'False', 'hello', 'goodbye',
+                          'python', 'dolly'},
                          l.keys())
 
     def test_15368(self):
@@ -1072,6 +1048,14 @@ class SessionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'YES')
 
+    def test_session_initiated(self):
+        session = self.client.session
+        session['session_var'] = 'foo'
+        session.save()
+
+        response = self.client.get('/check_session/')
+        self.assertEqual(response.content, b'foo')
+
     def test_logout(self):
         """Logout should work whether the user is logged in or not (#9978)."""
         self.client.logout()
@@ -1096,6 +1080,25 @@ class SessionTests(TestCase):
     @override_settings(AUTH_USER_MODEL='test_client_regress.CustomUser')
     def test_logout_with_custom_user(self):
         """Logout should send user_logged_out signal if custom user was logged in."""
+        def listener(*args, **kwargs):
+            self.assertEqual(kwargs['sender'], CustomUser)
+            listener.executed = True
+        listener.executed = False
+        u = CustomUser.custom_objects.create(email='test@test.com')
+        u.set_password('password')
+        u.save()
+
+        user_logged_out.connect(listener)
+        self.client.login(username='test@test.com', password='password')
+        self.client.logout()
+        user_logged_out.disconnect(listener)
+        self.assertTrue(listener.executed)
+
+    @override_settings(AUTHENTICATION_BACKENDS=(
+        'django.contrib.auth.backends.ModelBackend',
+        'test_client_regress.auth_backends.CustomUserBackend'))
+    def test_logout_with_custom_auth_backend(self):
+        "Request a logout after logging in with custom authentication backend"
         def listener(*args, **kwargs):
             self.assertEqual(kwargs['sender'], CustomUser)
             listener.executed = True
@@ -1225,6 +1228,16 @@ class RequestMethodStringDataTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'request method: PATCH')
 
+    def test_empty_string_data(self):
+        "Request a view with empty string data via request method GET/POST/HEAD"
+        # Regression test for #21740
+        response = self.client.get('/body/', data='', content_type='application/json')
+        self.assertEqual(response.content, b'')
+        response = self.client.post('/body/', data='', content_type='application/json')
+        self.assertEqual(response.content, b'')
+        response = self.client.head('/body/', data='', content_type='application/json')
+        self.assertEqual(response.content, b'')
+
 
 @override_settings(ROOT_URLCONF='test_client_regress.urls',)
 class QueryStringTests(TestCase):
@@ -1348,31 +1361,11 @@ class UploadedFileEncodingTest(TestCase):
 
 @override_settings(ROOT_URLCONF='test_client_regress.urls',)
 class RequestHeadersTest(TestCase):
-    fixtures = ['testdata']
-
     def test_client_headers(self):
         "A test client can receive custom headers"
         response = self.client.get("/check_headers/", HTTP_X_ARG_CHECK='Testing 123')
         self.assertEqual(response.content, b"HTTP_X_ARG_CHECK: Testing 123")
         self.assertEqual(response.status_code, 200)
-
-    @override_settings(PASSWORD_HASHERS=('django.contrib.auth.hashers.SHA1PasswordHasher',))
-    def test_client_login_headers(self):
-        "Test client headers are used in login"
-
-        client = Client(HTTP_HOST='different')
-
-        def listener(sender, signal, **kwargs):
-            request = kwargs['request']
-            self.assertEqual(request.get_host(), 'different')
-
-        # Unlike other Client request performing methods, login and logout don't
-        # return the response, therefore we must use signals to get it
-        user_logged_in.connect(listener)
-        try:
-            client.login(username='testclient', password='password')
-        finally:
-            user_logged_in.disconnect(listener)
 
     def test_client_headers_redirect(self):
         "Test client headers are preserved through redirects"

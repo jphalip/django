@@ -10,10 +10,11 @@ from django.core.exceptions import SuspiciousOperation
 from django.core.handlers.wsgi import WSGIRequest, LimitedStream
 from django.http import (HttpRequest, HttpResponse, parse_cookie,
     build_request_repr, UnreadablePostError, RawPostDataException)
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, RequestFactory, override_settings
 from django.test.client import FakePayload
 from django.test.utils import str_prefix
 from django.utils import six
+from django.utils.encoding import force_str
 from django.utils.http import cookie_date, urlencode
 from django.utils.six.moves.urllib.parse import urlencode as original_urlencode
 from django.utils.timezone import utc
@@ -26,6 +27,26 @@ class RequestsTests(SimpleTestCase):
         self.assertEqual(list(request.POST.keys()), [])
         self.assertEqual(list(request.COOKIES.keys()), [])
         self.assertEqual(list(request.META.keys()), [])
+
+        # .GET and .POST should be QueryDicts
+        self.assertEqual(request.GET.urlencode(), '')
+        self.assertEqual(request.POST.urlencode(), '')
+
+        # and FILES should be MultiValueDict
+        self.assertEqual(request.FILES.getlist('foo'), [])
+
+    def test_httprequest_full_path(self):
+        request = HttpRequest()
+        request.path = request.path_info = '/;some/?awful/=path/foo:bar/'
+        request.META['QUERY_STRING'] = ';some=query&+query=string'
+        expected = '/%3Bsome/%3Fawful/%3Dpath/foo:bar/?;some=query&+query=string'
+        self.assertEqual(request.get_full_path(), expected)
+
+    def test_httprequest_full_path_with_query_string_and_fragment(self):
+        request = HttpRequest()
+        request.path = request.path_info = '/foo#bar'
+        request.META['QUERY_STRING'] = 'baz#quux'
+        self.assertEqual(request.get_full_path(), '/foo%23bar?baz#quux')
 
     def test_httprequest_repr(self):
         request = HttpRequest()
@@ -60,7 +81,7 @@ class RequestsTests(SimpleTestCase):
         self.assertEqual(list(request.GET.keys()), [])
         self.assertEqual(list(request.POST.keys()), [])
         self.assertEqual(list(request.COOKIES.keys()), [])
-        self.assertEqual(set(request.META.keys()), set(['PATH_INFO', 'REQUEST_METHOD', 'SCRIPT_NAME', 'wsgi.input']))
+        self.assertEqual(set(request.META.keys()), {'PATH_INFO', 'REQUEST_METHOD', 'SCRIPT_NAME', 'wsgi.input'})
         self.assertEqual(request.META['PATH_INFO'], 'bogus')
         self.assertEqual(request.META['REQUEST_METHOD'], 'bogus')
         self.assertEqual(request.META['SCRIPT_NAME'], '')
@@ -183,8 +204,15 @@ class RequestsTests(SimpleTestCase):
         example_cookie = response.cookies['example']
         # A compat cookie may be in use -- check that it has worked
         # both as an output string, and using the cookie attributes
-        self.assertTrue('; httponly' in str(example_cookie))
+        self.assertIn('; httponly', str(example_cookie))
         self.assertTrue(example_cookie['httponly'])
+
+    def test_unicode_cookie(self):
+        "Verify HttpResponse.set_cookie() works with unicode data."
+        response = HttpResponse()
+        cookie_value = '清風'
+        response.set_cookie('test', cookie_value)
+        self.assertEqual(force_str(cookie_value), response.cookies['test'].value)
 
     def test_limited_stream(self):
         # Read all of a limited stream
@@ -646,8 +674,8 @@ class HostValidationTests(SimpleTestCase):
     def test_get_host_suggestion_of_allowed_host(self):
         """get_host() makes helpful suggestions if a valid-looking host is not in ALLOWED_HOSTS."""
         msg_invalid_host = "Invalid HTTP_HOST header: %r."
-        msg_suggestion = msg_invalid_host + "You may need to add %r to ALLOWED_HOSTS."
-        msg_suggestion2 = msg_invalid_host + "The domain name provided is not valid according to RFC 1034/1035"
+        msg_suggestion = msg_invalid_host + " You may need to add %r to ALLOWED_HOSTS."
+        msg_suggestion2 = msg_invalid_host + " The domain name provided is not valid according to RFC 1034/1035"
 
         for host in [  # Valid-looking hosts
             'example.com',
@@ -692,4 +720,65 @@ class HostValidationTests(SimpleTestCase):
             SuspiciousOperation,
             msg_suggestion2 % "invalid_hostname.com",
             request.get_host
+        )
+
+
+class BuildAbsoluteURITestCase(SimpleTestCase):
+    """
+    Regression tests for ticket #18314.
+    """
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_build_absolute_uri_no_location(self):
+        """
+        Ensures that ``request.build_absolute_uri()`` returns the proper value
+        when the ``location`` argument is not provided, and ``request.path``
+        begins with //.
+        """
+        # //// is needed to create a request with a path beginning with //
+        request = self.factory.get('////absolute-uri')
+        self.assertEqual(
+            request.build_absolute_uri(),
+            'http://testserver//absolute-uri'
+        )
+
+    def test_build_absolute_uri_absolute_location(self):
+        """
+        Ensures that ``request.build_absolute_uri()`` returns the proper value
+        when an absolute URL ``location`` argument is provided, and
+        ``request.path`` begins with //.
+        """
+        # //// is needed to create a request with a path beginning with //
+        request = self.factory.get('////absolute-uri')
+        self.assertEqual(
+            request.build_absolute_uri(location='http://example.com/?foo=bar'),
+            'http://example.com/?foo=bar'
+        )
+
+    def test_build_absolute_uri_schema_relative_location(self):
+        """
+        Ensures that ``request.build_absolute_uri()`` returns the proper value
+        when a schema-relative URL ``location`` argument is provided, and
+        ``request.path`` begins with //.
+        """
+        # //// is needed to create a request with a path beginning with //
+        request = self.factory.get('////absolute-uri')
+        self.assertEqual(
+            request.build_absolute_uri(location='//example.com/?foo=bar'),
+            'http://example.com/?foo=bar'
+        )
+
+    def test_build_absolute_uri_relative_location(self):
+        """
+        Ensures that ``request.build_absolute_uri()`` returns the proper value
+        when a relative URL ``location`` argument is provided, and
+        ``request.path`` begins with //.
+        """
+        # //// is needed to create a request with a path beginning with //
+        request = self.factory.get('////absolute-uri')
+        self.assertEqual(
+            request.build_absolute_uri(location='/foo/bar/'),
+            'http://testserver/foo/bar/'
         )

@@ -210,7 +210,7 @@ Django provides a single API to control database transactions.
 
     Open transactions have a performance cost for your database server. To
     minimize this overhead, keep your transactions as short as possible. This
-    is especially important of you're using :func:`atomic` in long-running
+    is especially important if you're using :func:`atomic` in long-running
     processes, outside of Django's request / response cycle.
 
 Autocommit
@@ -447,7 +447,7 @@ function in autocommit mode: statements will be executed and committed as soon
 as they're called. If your MySQL setup *does* support transactions, Django
 will handle transactions as explained in this document.
 
-.. _information on MySQL transactions: http://dev.mysql.com/doc/refman/5.0/en/sql-syntax-transactions.html
+.. _information on MySQL transactions: http://dev.mysql.com/doc/refman/5.6/en/sql-syntax-transactions.html
 
 Handling exceptions within PostgreSQL transactions
 --------------------------------------------------
@@ -575,7 +575,7 @@ the block of code it controls; when exiting the block, it commits or
 rollbacks, and switches back to auto mode.
 
 So :func:`commit_on_success` really has two effects: it changes the
-transaction state and it defines an transaction block. Nesting will give the
+transaction state and it defines a transaction block. Nesting will give the
 expected results in terms of transaction state, but not in terms of
 transaction semantics. Most often, the inner block will commit, breaking the
 atomicity of the outer block.
