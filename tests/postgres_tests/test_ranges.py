@@ -1,31 +1,26 @@
 import datetime
 import json
-import unittest
-
-from psycopg2.extras import DateRange, DateTimeTZRange, NumericRange
 
 from django import forms
-from django.contrib.postgres import fields as pg_fields, forms as pg_forms
-from django.contrib.postgres.validators import (
-    RangeMaxValueValidator, RangeMinValueValidator,
-)
 from django.core import exceptions, serializers
-from django.db import connection
-from django.test import TestCase
+from django.db.models import DateField, DateTimeField, F, Func, Value
+from django.test import override_settings
 from django.utils import timezone
 
-from .models import RangesModel
+from . import PostgreSQLTestCase
+from .models import RangeLookupsModel, RangesModel
+
+try:
+    from psycopg2.extras import DateRange, DateTimeTZRange, NumericRange
+    from django.contrib.postgres import fields as pg_fields, forms as pg_forms
+    from django.contrib.postgres.validators import (
+        RangeMaxValueValidator, RangeMinValueValidator,
+    )
+except ImportError:
+    pass
 
 
-def skipUnlessPG92(test):
-    PG_VERSION = connection.pg_version
-    if PG_VERSION < 90200:
-        return unittest.skip('PostgreSQL >= 9.2 required')(test)
-    return test
-
-
-@skipUnlessPG92
-class TestSaveLoad(TestCase):
+class TestSaveLoad(PostgreSQLTestCase):
 
     def test_all_fields(self):
         now = timezone.now()
@@ -63,7 +58,7 @@ class TestSaveLoad(TestCase):
         instance.save()
         loaded = RangesModel.objects.get()
         self.assertEqual(r, loaded.floats)
-        self.assertTrue(10 in loaded.floats)
+        self.assertIn(10, loaded.floats)
 
     def test_unbounded(self):
         r = NumericRange(None, None, '()')
@@ -83,11 +78,90 @@ class TestSaveLoad(TestCase):
         instance = RangesModel(ints=None)
         instance.save()
         loaded = RangesModel.objects.get()
-        self.assertEqual(None, loaded.ints)
+        self.assertIsNone(loaded.ints)
+
+    def test_model_set_on_base_field(self):
+        instance = RangesModel()
+        field = instance._meta.get_field('ints')
+        self.assertEqual(field.model, RangesModel)
+        self.assertEqual(field.base_field.model, RangesModel)
 
 
-@skipUnlessPG92
-class TestQuerying(TestCase):
+class TestRangeContainsLookup(PostgreSQLTestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.timestamps = [
+            datetime.datetime(year=2016, month=1, day=1),
+            datetime.datetime(year=2016, month=1, day=2, hour=1),
+            datetime.datetime(year=2016, month=1, day=2, hour=12),
+            datetime.datetime(year=2016, month=1, day=3),
+            datetime.datetime(year=2016, month=1, day=3, hour=1),
+            datetime.datetime(year=2016, month=2, day=2),
+        ]
+        cls.aware_timestamps = [
+            timezone.make_aware(timestamp, timezone.get_current_timezone())
+            for timestamp in cls.timestamps
+        ]
+        cls.dates = [
+            datetime.date(year=2016, month=1, day=1),
+            datetime.date(year=2016, month=1, day=2),
+            datetime.date(year=2016, month=1, day=3),
+            datetime.date(year=2016, month=1, day=4),
+            datetime.date(year=2016, month=2, day=2),
+            datetime.date(year=2016, month=2, day=3),
+        ]
+        cls.obj = RangesModel.objects.create(
+            dates=(cls.dates[0], cls.dates[3]),
+            timestamps=(cls.timestamps[0], cls.timestamps[3]),
+        )
+        cls.aware_obj = RangesModel.objects.create(
+            dates=(cls.dates[0], cls.dates[3]),
+            timestamps=(cls.aware_timestamps[0], cls.aware_timestamps[3]),
+        )
+        # Objects that don't match any queries.
+        for i in range(3, 4):
+            RangesModel.objects.create(
+                dates=(cls.dates[i], cls.dates[i + 1]),
+                timestamps=(cls.timestamps[i], cls.timestamps[i + 1]),
+            )
+            RangesModel.objects.create(
+                dates=(cls.dates[i], cls.dates[i + 1]),
+                timestamps=(cls.aware_timestamps[i], cls.aware_timestamps[i + 1]),
+            )
+
+    def test_datetime_range_contains(self):
+        filter_args = (
+            self.timestamps[1],
+            self.aware_timestamps[1],
+            (self.timestamps[1], self.timestamps[2]),
+            (self.aware_timestamps[1], self.aware_timestamps[2]),
+            Value(self.dates[0], output_field=DateTimeField()),
+            Func(F('dates'), function='lower', output_field=DateTimeField()),
+        )
+        for filter_arg in filter_args:
+            with self.subTest(filter_arg=filter_arg):
+                self.assertCountEqual(
+                    RangesModel.objects.filter(**{'timestamps__contains': filter_arg}),
+                    [self.obj, self.aware_obj],
+                )
+
+    def test_date_range_contains(self):
+        filter_args = (
+            self.timestamps[1],
+            (self.dates[1], self.dates[2]),
+            Value(self.dates[0], output_field=DateField()),
+            Func(F('timestamps'), function='lower', output_field=DateField()),
+        )
+        for filter_arg in filter_args:
+            with self.subTest(filter_arg=filter_arg):
+                self.assertCountEqual(
+                    RangesModel.objects.filter(**{'dates__contains': filter_arg}),
+                    [self.obj, self.aware_obj],
+                )
+
+
+class TestQuerying(PostgreSQLTestCase):
 
     @classmethod
     def setUpTestData(cls):
@@ -190,32 +264,146 @@ class TestQuerying(TestCase):
         )
 
 
-@skipUnlessPG92
-class TestSerialization(TestCase):
+class TestQueryingWithRanges(PostgreSQLTestCase):
+    def test_date_range(self):
+        objs = [
+            RangeLookupsModel.objects.create(date='2015-01-01'),
+            RangeLookupsModel.objects.create(date='2015-05-05'),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.filter(date__contained_by=DateRange('2015-01-01', '2015-05-04')),
+            [objs[0]],
+        )
+
+    def test_date_range_datetime_field(self):
+        objs = [
+            RangeLookupsModel.objects.create(timestamp='2015-01-01'),
+            RangeLookupsModel.objects.create(timestamp='2015-05-05'),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.filter(timestamp__date__contained_by=DateRange('2015-01-01', '2015-05-04')),
+            [objs[0]],
+        )
+
+    def test_datetime_range(self):
+        objs = [
+            RangeLookupsModel.objects.create(timestamp='2015-01-01T09:00:00'),
+            RangeLookupsModel.objects.create(timestamp='2015-05-05T17:00:00'),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.filter(
+                timestamp__contained_by=DateTimeTZRange('2015-01-01T09:00', '2015-05-04T23:55')
+            ),
+            [objs[0]],
+        )
+
+    def test_integer_range(self):
+        objs = [
+            RangeLookupsModel.objects.create(integer=5),
+            RangeLookupsModel.objects.create(integer=99),
+            RangeLookupsModel.objects.create(integer=-1),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.filter(integer__contained_by=NumericRange(1, 98)),
+            [objs[0]]
+        )
+
+    def test_biginteger_range(self):
+        objs = [
+            RangeLookupsModel.objects.create(big_integer=5),
+            RangeLookupsModel.objects.create(big_integer=99),
+            RangeLookupsModel.objects.create(big_integer=-1),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.filter(big_integer__contained_by=NumericRange(1, 98)),
+            [objs[0]]
+        )
+
+    def test_float_range(self):
+        objs = [
+            RangeLookupsModel.objects.create(float=5),
+            RangeLookupsModel.objects.create(float=99),
+            RangeLookupsModel.objects.create(float=-1),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.filter(float__contained_by=NumericRange(1, 98)),
+            [objs[0]]
+        )
+
+    def test_f_ranges(self):
+        parent = RangesModel.objects.create(floats=NumericRange(0, 10))
+        objs = [
+            RangeLookupsModel.objects.create(float=5, parent=parent),
+            RangeLookupsModel.objects.create(float=99, parent=parent),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.filter(float__contained_by=F('parent__floats')),
+            [objs[0]]
+        )
+
+    def test_exclude(self):
+        objs = [
+            RangeLookupsModel.objects.create(float=5),
+            RangeLookupsModel.objects.create(float=99),
+            RangeLookupsModel.objects.create(float=-1),
+        ]
+        self.assertSequenceEqual(
+            RangeLookupsModel.objects.exclude(float__contained_by=NumericRange(0, 100)),
+            [objs[2]]
+        )
+
+
+class TestSerialization(PostgreSQLTestCase):
     test_data = (
-        '[{"fields": {"ints": "{\\"upper\\": 10, \\"lower\\": 0, '
+        '[{"fields": {"ints": "{\\"upper\\": \\"10\\", \\"lower\\": \\"0\\", '
         '\\"bounds\\": \\"[)\\"}", "floats": "{\\"empty\\": true}", '
-        '"bigints": null, "timestamps": null, "dates": null}, '
+        '"bigints": null, "timestamps": "{\\"upper\\": \\"2014-02-02T12:12:12+00:00\\", '
+        '\\"lower\\": \\"2014-01-01T00:00:00+00:00\\", \\"bounds\\": \\"[)\\"}", '
+        '"dates": "{\\"upper\\": \\"2014-02-02\\", \\"lower\\": \\"2014-01-01\\", \\"bounds\\": \\"[)\\"}" }, '
         '"model": "postgres_tests.rangesmodel", "pk": null}]'
     )
 
+    lower_date = datetime.date(2014, 1, 1)
+    upper_date = datetime.date(2014, 2, 2)
+    lower_dt = datetime.datetime(2014, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    upper_dt = datetime.datetime(2014, 2, 2, 12, 12, 12, tzinfo=timezone.utc)
+
     def test_dumping(self):
-        instance = RangesModel(ints=NumericRange(0, 10), floats=NumericRange(empty=True))
+        instance = RangesModel(
+            ints=NumericRange(0, 10), floats=NumericRange(empty=True),
+            timestamps=DateTimeTZRange(self.lower_dt, self.upper_dt),
+            dates=DateRange(self.lower_date, self.upper_date),
+        )
         data = serializers.serialize('json', [instance])
         dumped = json.loads(data)
-        dumped[0]['fields']['ints'] = json.loads(dumped[0]['fields']['ints'])
+        for field in ('ints', 'dates', 'timestamps'):
+            dumped[0]['fields'][field] = json.loads(dumped[0]['fields'][field])
         check = json.loads(self.test_data)
-        check[0]['fields']['ints'] = json.loads(check[0]['fields']['ints'])
+        for field in ('ints', 'dates', 'timestamps'):
+            check[0]['fields'][field] = json.loads(check[0]['fields'][field])
         self.assertEqual(dumped, check)
 
     def test_loading(self):
         instance = list(serializers.deserialize('json', self.test_data))[0].object
         self.assertEqual(instance.ints, NumericRange(0, 10))
         self.assertEqual(instance.floats, NumericRange(empty=True))
-        self.assertEqual(instance.dates, None)
+        self.assertIsNone(instance.bigints)
+        self.assertEqual(instance.dates, DateRange(self.lower_date, self.upper_date))
+        self.assertEqual(instance.timestamps, DateTimeTZRange(self.lower_dt, self.upper_dt))
+
+    def test_serialize_range_with_null(self):
+        instance = RangesModel(ints=NumericRange(None, 10))
+        data = serializers.serialize('json', [instance])
+        new_instance = list(serializers.deserialize('json', data))[0].object
+        self.assertEqual(new_instance.ints, NumericRange(None, 10))
+
+        instance = RangesModel(ints=NumericRange(10, None))
+        data = serializers.serialize('json', [instance])
+        new_instance = list(serializers.deserialize('json', data))[0].object
+        self.assertEqual(new_instance.ints, NumericRange(10, None))
 
 
-class TestValidators(TestCase):
+class TestValidators(PostgreSQLTestCase):
 
     def test_max(self):
         validator = RangeMaxValueValidator(5)
@@ -234,7 +422,7 @@ class TestValidators(TestCase):
         self.assertEqual(cm.exception.code, 'min_value')
 
 
-class TestFormField(TestCase):
+class TestFormField(PostgreSQLTestCase):
 
     def test_valid_integer(self):
         field = pg_forms.IntegerRangeField()
@@ -295,7 +483,7 @@ class TestFormField(TestCase):
     def test_none(self):
         field = pg_forms.IntegerRangeField(required=False)
         value = field.clean(['', ''])
-        self.assertEqual(value, None)
+        self.assertIsNone(value)
 
     def test_rendering(self):
         class RangeForm(forms.Form):
@@ -467,6 +655,14 @@ class TestFormField(TestCase):
         value = field.clean(['2013-04-09 11:45', ''])
         self.assertEqual(value, DateTimeTZRange(datetime.datetime(2013, 4, 9, 11, 45), None))
 
+    @override_settings(USE_TZ=True, TIME_ZONE='Africa/Johannesburg')
+    def test_datetime_prepare_value(self):
+        field = pg_forms.DateTimeRangeField()
+        value = field.prepare_value(
+            DateTimeTZRange(datetime.datetime(2015, 5, 22, 16, 6, 33, tzinfo=timezone.utc), None)
+        )
+        self.assertEqual(value, [datetime.datetime(2015, 5, 22, 18, 6, 33), None])
+
     def test_model_field_formfield_integer(self):
         model_field = pg_fields.IntegerRangeField()
         form_field = model_field.formfield()
@@ -493,7 +689,7 @@ class TestFormField(TestCase):
         self.assertIsInstance(form_field, pg_forms.DateTimeRangeField)
 
 
-class TestWidget(TestCase):
+class TestWidget(PostgreSQLTestCase):
     def test_range_widget(self):
         f = pg_forms.ranges.DateTimeRangeField()
         self.assertHTMLEqual(
@@ -510,5 +706,6 @@ class TestWidget(TestCase):
         )
         self.assertHTMLEqual(
             f.widget.render('datetimerange', dt_range),
-            '<input type="text" name="datetimerange_0" value="2006-01-10 07:30:00" /><input type="text" name="datetimerange_1" value="2006-02-12 09:50:00" />'
+            '<input type="text" name="datetimerange_0" value="2006-01-10 07:30:00" />'
+            '<input type="text" name="datetimerange_1" value="2006-02-12 09:50:00" />'
         )

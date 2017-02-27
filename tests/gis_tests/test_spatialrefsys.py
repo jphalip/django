@@ -1,9 +1,6 @@
-import unittest
+import re
 
-from django.contrib.gis.gdal import HAS_GDAL
-from django.db import connection
-from django.test import skipUnlessDBFeature
-from django.utils import six
+from django.test import TestCase, skipUnlessDBFeature
 
 from .utils import SpatialRefSys, oracle, postgis, spatialite
 
@@ -20,6 +17,18 @@ test_srs = ({
     # From proj's "cs2cs -le" and Wikipedia (semi-minor only)
     'ellipsoid': (6378137.0, 6356752.3, 298.257223563),
     'eprec': (1, 1, 9),
+    'wkt': re.sub(r'[\s+]', '', """
+        GEOGCS["WGS 84",
+    DATUM["WGS_1984",
+        SPHEROID["WGS 84",6378137,298.257223563,
+            AUTHORITY["EPSG","7030"]],
+        AUTHORITY["EPSG","6326"]],
+    PRIMEM["Greenwich",0,
+        AUTHORITY["EPSG","8901"]],
+    UNIT["degree",0.01745329251994328,
+        AUTHORITY["EPSG","9122"]],
+    AUTHORITY["EPSG","4326"]]
+    """)
 }, {
     'srid': 32140,
     'auth_name': ('EPSG', False),
@@ -39,9 +48,14 @@ test_srs = ({
 })
 
 
-@unittest.skipUnless(HAS_GDAL, "SpatialRefSysTest needs gdal support")
 @skipUnlessDBFeature("has_spatialrefsys_table")
-class SpatialRefSysTest(unittest.TestCase):
+class SpatialRefSysTest(TestCase):
+
+    def test_get_units(self):
+        epsg_4326 = next(f for f in test_srs if f['srid'] == 4326)
+        unit, unit_name = SpatialRefSys().get_units(epsg_4326['wkt'])
+        self.assertEqual(unit_name, 'degree')
+        self.assertAlmostEqual(unit, 0.01745329251994328)
 
     def test_retrieve(self):
         """
@@ -56,14 +70,14 @@ class SpatialRefSysTest(unittest.TestCase):
             #  the testing with the 'startswith' flag.
             auth_name, oracle_flag = sd['auth_name']
             if postgis or (oracle and oracle_flag):
-                self.assertEqual(True, srs.auth_name.startswith(auth_name))
+                self.assertTrue(srs.auth_name.startswith(auth_name))
 
             self.assertEqual(sd['auth_srid'], srs.auth_srid)
 
             # No proj.4 and different srtext on oracle backends :(
             if postgis:
                 self.assertTrue(srs.wkt.startswith(sd['srtext']))
-                six.assertRegex(self, srs.proj4text, sd['proj4_re'])
+                self.assertRegex(srs.proj4text, sd['proj4_re'])
 
     def test_osr(self):
         """
@@ -71,22 +85,20 @@ class SpatialRefSysTest(unittest.TestCase):
         """
         for sd in test_srs:
             sr = SpatialRefSys.objects.get(srid=sd['srid'])
-            self.assertEqual(True, sr.spheroid.startswith(sd['spheroid']))
+            self.assertTrue(sr.spheroid.startswith(sd['spheroid']))
             self.assertEqual(sd['geographic'], sr.geographic)
             self.assertEqual(sd['projected'], sr.projected)
 
             if not (spatialite and not sd['spatialite']):
                 # Can't get 'NAD83 / Texas South Central' from PROJ.4 string
                 # on SpatiaLite
-                self.assertEqual(True, sr.name.startswith(sd['name']))
+                self.assertTrue(sr.name.startswith(sd['name']))
 
             # Testing the SpatialReference object directly.
             if postgis or spatialite:
                 srs = sr.srs
-                six.assertRegex(self, srs.proj4, sd['proj4_re'])
-                # No `srtext` field in the `spatial_ref_sys` table in SpatiaLite < 4
-                if not spatialite or connection.ops.spatial_version[0] >= 4:
-                    self.assertTrue(srs.wkt.startswith(sd['srtext']))
+                self.assertRegex(srs.proj4, sd['proj4_re'])
+                self.assertTrue(srs.wkt.startswith(sd['srtext']))
 
     def test_ellipsoid(self):
         """

@@ -1,9 +1,4 @@
-class BaseSpatialOperations(object):
-    """
-    This module holds the base `BaseSpatialBackend` object, which is
-    instantiated by each spatial database backend with the features
-    it has.
-    """
+class BaseSpatialOperations:
     truncate_params = {}
 
     # Quick booleans for the type of this spatial backend, and
@@ -22,6 +17,7 @@ class BaseSpatialOperations(object):
     geometry = False
 
     area = False
+    bounding_circle = False
     centroid = False
     difference = False
     distance = False
@@ -30,7 +26,6 @@ class BaseSpatialOperations(object):
     envelope = False
     force_rhr = False
     mem_size = False
-    bounding_circle = False
     num_geom = False
     num_points = False
     perimeter = False
@@ -47,6 +42,22 @@ class BaseSpatialOperations(object):
 
     # Aggregates
     disallowed_aggregates = ()
+
+    geom_func_prefix = ''
+
+    # Mapping between Django function names and backend names, when names do not
+    # match; used in spatial_function_name().
+    function_names = {}
+
+    # Blacklist/set of known unsupported functions of the backend
+    unsupported_functions = {
+        'Area', 'AsGeoJSON', 'AsGML', 'AsKML', 'AsSVG',
+        'BoundingCircle', 'Centroid', 'Difference', 'Distance', 'Envelope',
+        'ForceRHR', 'GeoHash', 'Intersection', 'IsValid', 'Length', 'MakeValid',
+        'MemSize', 'NumGeometries', 'NumPoints', 'Perimeter', 'PointOnSurface',
+        'Reverse', 'Scale', 'SnapToGrid', 'SymDifference', 'Transform',
+        'Translate', 'Union',
+    }
 
     # Serialization
     geohash = False
@@ -67,9 +78,6 @@ class BaseSpatialOperations(object):
     def convert_extent3d(self, box, srid):
         raise NotImplementedError('Aggregate 3D extent not implemented for this spatial backend.')
 
-    def convert_geom(self, geom_val, geom_field):
-        raise NotImplementedError('Aggregate method not implemented for this spatial backend.')
-
     # For quoting column values, rather than columns.
     def geo_quote_name(self, name):
         return "'%s'" % name
@@ -77,21 +85,21 @@ class BaseSpatialOperations(object):
     # GeometryField operations
     def geo_db_type(self, f):
         """
-        Returns the database column type for the geometry field on
+        Return the database column type for the geometry field on
         the spatial backend.
         """
         raise NotImplementedError('subclasses of BaseSpatialOperations must provide a geo_db_type() method')
 
     def get_distance(self, f, value, lookup_type):
         """
-        Returns the distance parameters for the given geometry field,
+        Return the distance parameters for the given geometry field,
         lookup value, and lookup type.
         """
         raise NotImplementedError('Distance operations not available on this spatial backend.')
 
     def get_geom_placeholder(self, f, value, compiler):
         """
-        Returns the placeholder for the given geometry field with the given
+        Return the placeholder for the given geometry field with the given
         value.  Depending on the spatial backend, the placeholder may contain a
         stored procedure call to the transformation function of the spatial
         backend.
@@ -103,14 +111,19 @@ class BaseSpatialOperations(object):
             raise NotImplementedError(
                 "%s spatial aggregation is not supported by this database backend." % expression.name
             )
-        super(BaseSpatialOperations, self).check_expression_support(expression)
+        super().check_expression_support(expression)
 
     def spatial_aggregate_name(self, agg_name):
         raise NotImplementedError('Aggregate support not implemented for this spatial backend.')
 
+    def spatial_function_name(self, func_name):
+        if func_name in self.unsupported_functions:
+            raise NotImplementedError("This backend doesn't support the %s function." % func_name)
+        return self.function_names.get(func_name, self.geom_func_prefix + func_name)
+
     # Routines for getting the OGC-compliant models.
     def geometry_columns(self):
-        raise NotImplementedError('subclasses of BaseSpatialOperations must a provide geometry_columns() method')
+        raise NotImplementedError('Subclasses of BaseSpatialOperations must provide a geometry_columns() method.')
 
     def spatial_ref_sys(self):
         raise NotImplementedError('subclasses of BaseSpatialOperations must a provide spatial_ref_sys() method')

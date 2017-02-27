@@ -2,8 +2,6 @@
 XML serializer.
 """
 
-from __future__ import unicode_literals
-
 from collections import OrderedDict
 from xml.dom import pulldom
 from xml.sax import handler
@@ -13,18 +11,18 @@ from django.apps import apps
 from django.conf import settings
 from django.core.serializers import base
 from django.db import DEFAULT_DB_ALIAS, models
-from django.utils.encoding import smart_text
-from django.utils.xmlutils import SimplerXMLGenerator
+from django.utils.encoding import force_text
+from django.utils.xmlutils import (
+    SimplerXMLGenerator, UnserializableContentError,
+)
 
 
 class Serializer(base.Serializer):
-    """
-    Serializes a QuerySet to XML.
-    """
+    """Serialize a QuerySet to XML."""
 
     def indent(self, level):
-        if self.options.get('indent', None) is not None:
-            self.xml.ignorableWhitespace('\n' + ' ' * self.options.get('indent', None) * level)
+        if self.options.get('indent') is not None:
+            self.xml.ignorableWhitespace('\n' + ' ' * self.options.get('indent') * level)
 
     def start_serialization(self):
         """
@@ -50,11 +48,11 @@ class Serializer(base.Serializer):
             raise base.SerializationError("Non-model object (%s) encountered during serialization" % type(obj))
 
         self.indent(1)
-        attrs = OrderedDict([("model", smart_text(obj._meta))])
+        attrs = OrderedDict([("model", force_text(obj._meta))])
         if not self.use_natural_primary_keys or not hasattr(obj, 'natural_key'):
             obj_pk = obj._get_pk_val()
             if obj_pk is not None:
-                attrs['pk'] = smart_text(obj_pk)
+                attrs['pk'] = force_text(obj_pk)
 
         self.xml.startElement("object", attrs)
 
@@ -67,8 +65,8 @@ class Serializer(base.Serializer):
 
     def handle_field(self, obj, field):
         """
-        Called to handle each field on an object (except for ForeignKeys and
-        ManyToManyFields)
+        Handle each field on an object (except for ForeignKeys and
+        ManyToManyFields).
         """
         self.indent(2)
         self.xml.startElement("field", OrderedDict([
@@ -78,7 +76,11 @@ class Serializer(base.Serializer):
 
         # Get a "string version" of the object's data.
         if getattr(obj, field.name) is not None:
-            self.xml.characters(field.value_to_string(obj))
+            try:
+                self.xml.characters(field.value_to_string(obj))
+            except UnserializableContentError:
+                raise ValueError("%s.%s (pk:%s) contains unserializable characters" % (
+                    obj.__class__.__name__, field.name, obj._get_pk_val()))
         else:
             self.xml.addQuickElement("None")
 
@@ -86,7 +88,7 @@ class Serializer(base.Serializer):
 
     def handle_fk_field(self, obj, field):
         """
-        Called to handle a ForeignKey (we need to treat them slightly
+        Handle a ForeignKey (they need to be treated slightly
         differently from regular fields).
         """
         self._start_relational_field(field)
@@ -99,19 +101,19 @@ class Serializer(base.Serializer):
                 # Iterable natural keys are rolled out as subelements
                 for key_value in related:
                     self.xml.startElement("natural", {})
-                    self.xml.characters(smart_text(key_value))
+                    self.xml.characters(force_text(key_value))
                     self.xml.endElement("natural")
             else:
-                self.xml.characters(smart_text(related_att))
+                self.xml.characters(force_text(related_att))
         else:
             self.xml.addQuickElement("None")
         self.xml.endElement("field")
 
     def handle_m2m_field(self, obj, field):
         """
-        Called to handle a ManyToManyField. Related objects are only
-        serialized as references to the object's PK (i.e. the related *data*
-        is not dumped, just the relation).
+        Handle a ManyToManyField. Related objects are only serialized as
+        references to the object's PK (i.e. the related *data* is not dumped,
+        just the relation).
         """
         if field.remote_field.through._meta.auto_created:
             self._start_relational_field(field)
@@ -123,13 +125,13 @@ class Serializer(base.Serializer):
                     self.xml.startElement("object", {})
                     for key_value in natural:
                         self.xml.startElement("natural", {})
-                        self.xml.characters(smart_text(key_value))
+                        self.xml.characters(force_text(key_value))
                         self.xml.endElement("natural")
                     self.xml.endElement("object")
             else:
                 def handle_m2m(value):
                     self.xml.addQuickElement("object", attrs={
-                        'pk': smart_text(value._get_pk_val())
+                        'pk': force_text(value._get_pk_val())
                     })
             for relobj in getattr(obj, field.name).iterator():
                 handle_m2m(relobj)
@@ -137,27 +139,23 @@ class Serializer(base.Serializer):
             self.xml.endElement("field")
 
     def _start_relational_field(self, field):
-        """
-        Helper to output the <field> element for relational fields
-        """
+        """Output the <field> element for relational fields."""
         self.indent(2)
         self.xml.startElement("field", OrderedDict([
             ("name", field.name),
             ("rel", field.remote_field.__class__.__name__),
-            ("to", smart_text(field.remote_field.model._meta)),
+            ("to", force_text(field.remote_field.model._meta)),
         ]))
 
 
 class Deserializer(base.Deserializer):
-    """
-    Deserialize XML.
-    """
+    """Deserialize XML."""
 
-    def __init__(self, stream_or_string, **options):
-        super(Deserializer, self).__init__(stream_or_string, **options)
+    def __init__(self, stream_or_string, *, using=DEFAULT_DB_ALIAS, ignorenonexistent=False, **options):
+        super().__init__(stream_or_string, **options)
         self.event_stream = pulldom.parse(self.stream, self._make_parser())
-        self.db = options.pop('using', DEFAULT_DB_ALIAS)
-        self.ignore = options.pop('ignorenonexistent', False)
+        self.db = using
+        self.ignore = ignorenonexistent
 
     def _make_parser(self):
         """Create a hardened XML parser (no custom/external entities)."""
@@ -171,9 +169,7 @@ class Deserializer(base.Deserializer):
         raise StopIteration
 
     def _handle_object(self, node):
-        """
-        Convert an <object> node to a DeserializedObject.
-        """
+        """Convert an <object> node to a DeserializedObject."""
         # Look up the model using the model loading mechanism. If this fails,
         # bail.
         Model = self._get_model_from_node(node, "model")
@@ -229,12 +225,13 @@ class Deserializer(base.Deserializer):
         if node.getElementsByTagName('None'):
             return None
         else:
-            if hasattr(field.remote_field.model._default_manager, 'get_by_natural_key'):
+            model = field.remote_field.model
+            if hasattr(model._default_manager, 'get_by_natural_key'):
                 keys = node.getElementsByTagName('natural')
                 if keys:
                     # If there are 'natural' subelements, it must be a natural key
                     field_value = [getInnerText(k).strip() for k in keys]
-                    obj = field.remote_field.model._default_manager.db_manager(self.db).get_by_natural_key(*field_value)
+                    obj = model._default_manager.db_manager(self.db).get_by_natural_key(*field_value)
                     obj_pk = getattr(obj, field.remote_field.field_name)
                     # If this is a natural foreign key to an object that
                     # has a FK/O2O as the foreign key, use the FK value
@@ -243,35 +240,38 @@ class Deserializer(base.Deserializer):
                 else:
                     # Otherwise, treat like a normal PK
                     field_value = getInnerText(node).strip()
-                    obj_pk = field.remote_field.model._meta.get_field(field.remote_field.field_name).to_python(field_value)
+                    obj_pk = model._meta.get_field(field.remote_field.field_name).to_python(field_value)
                 return obj_pk
             else:
                 field_value = getInnerText(node).strip()
-                return field.remote_field.model._meta.get_field(field.remote_field.field_name).to_python(field_value)
+                return model._meta.get_field(field.remote_field.field_name).to_python(field_value)
 
     def _handle_m2m_field_node(self, node, field):
         """
         Handle a <field> node for a ManyToManyField.
         """
-        if hasattr(field.remote_field.model._default_manager, 'get_by_natural_key'):
+        model = field.remote_field.model
+        default_manager = model._default_manager
+        if hasattr(default_manager, 'get_by_natural_key'):
             def m2m_convert(n):
                 keys = n.getElementsByTagName('natural')
                 if keys:
                     # If there are 'natural' subelements, it must be a natural key
                     field_value = [getInnerText(k).strip() for k in keys]
-                    obj_pk = field.remote_field.model._default_manager.db_manager(self.db).get_by_natural_key(*field_value).pk
+                    obj_pk = default_manager.db_manager(self.db).get_by_natural_key(*field_value).pk
                 else:
                     # Otherwise, treat like a normal PK value.
-                    obj_pk = field.remote_field.model._meta.pk.to_python(n.getAttribute('pk'))
+                    obj_pk = model._meta.pk.to_python(n.getAttribute('pk'))
                 return obj_pk
         else:
-            m2m_convert = lambda n: field.remote_field.model._meta.pk.to_python(n.getAttribute('pk'))
+            def m2m_convert(n):
+                return model._meta.pk.to_python(n.getAttribute('pk'))
         return [m2m_convert(c) for c in node.getElementsByTagName("object")]
 
     def _get_model_from_node(self, node, attr):
         """
-        Helper to look up a model from a <object model=...> or a <field
-        rel=... to=...> node.
+        Look up a model from a <object model=...> or a <field rel=... to=...>
+        node.
         """
         model_identifier = node.getAttribute(attr)
         if not model_identifier:
@@ -287,9 +287,7 @@ class Deserializer(base.Deserializer):
 
 
 def getInnerText(node):
-    """
-    Get all the inner text of a DOM node (recursively).
-    """
+    """Get all the inner text of a DOM node (recursively)."""
     # inspired by http://mail.python.org/pipermail/xml-sig/2005-March/011022.html
     inner_text = []
     for child in node.childNodes:
@@ -309,8 +307,7 @@ class DefusedExpatParser(_ExpatParser):
     """
     An expat parser hardened against XML bomb attacks.
 
-    Forbids DTDs, external entity references
-
+    Forbid DTDs, external entity references
     """
     def __init__(self, *args, **kwargs):
         _ExpatParser.__init__(self, *args, **kwargs)
@@ -349,7 +346,7 @@ class DefusedXmlException(ValueError):
 class DTDForbidden(DefusedXmlException):
     """Document type definition is forbidden."""
     def __init__(self, name, sysid, pubid):
-        super(DTDForbidden, self).__init__()
+        super().__init__()
         self.name = name
         self.sysid = sysid
         self.pubid = pubid
@@ -362,7 +359,7 @@ class DTDForbidden(DefusedXmlException):
 class EntitiesForbidden(DefusedXmlException):
     """Entity definition is forbidden."""
     def __init__(self, name, value, base, sysid, pubid, notation_name):
-        super(EntitiesForbidden, self).__init__()
+        super().__init__()
         self.name = name
         self.value = value
         self.base = base
@@ -378,7 +375,7 @@ class EntitiesForbidden(DefusedXmlException):
 class ExternalReferenceForbidden(DefusedXmlException):
     """Resolving an external reference is forbidden."""
     def __init__(self, context, base, sysid, pubid):
-        super(ExternalReferenceForbidden, self).__init__()
+        super().__init__()
         self.context = context
         self.base = base
         self.sysid = sysid

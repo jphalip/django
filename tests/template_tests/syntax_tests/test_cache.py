@@ -1,11 +1,15 @@
 from django.core.cache import cache
-from django.template import Context, Template, TemplateSyntaxError
+from django.template import Context, Engine, TemplateSyntaxError
 from django.test import SimpleTestCase, override_settings
 
 from ..utils import setup
 
 
 class CacheTagTests(SimpleTestCase):
+    libraries = {
+        'cache': 'django.templatetags.cache',
+        'custom': 'template_tests.templatetags.custom',
+    }
 
     def tearDown(self):
         cache.clear()
@@ -96,16 +100,18 @@ class CacheTagTests(SimpleTestCase):
         """
         Regression test for #11270.
         """
-        output = self.engine.render_to_string('cache17', {'poem': 'Oh freddled gruntbuggly/'
-                                            'Thy micturations are to me/'
-                                            'As plurdled gabbleblotchits/'
-                                            'On a lurgid bee/'
-                                            'That mordiously hath bitled out/'
-                                            'Its earted jurtles/'
-                                            'Into a rancid festering/'
-                                            'Or else I shall rend thee in the gobberwarts'
-                                            'with my blurglecruncheon/'
-                                            'See if I dont.'})
+        output = self.engine.render_to_string(
+            'cache17',
+            {
+                'poem': (
+                    'Oh freddled gruntbuggly/Thy micturations are to me/'
+                    'As plurdled gabbleblotchits/On a lurgid bee/'
+                    'That mordiously hath bitled out/Its earted jurtles/'
+                    'Into a rancid festering/Or else I shall rend thee in the gobberwarts'
+                    'with my blurglecruncheon/See if I dont.'
+                ),
+            }
+        )
         self.assertEqual(output, 'Some Content')
 
     @setup({'cache18': '{% load cache custom %}{% cache 2|noop:"x y" cache18 %}cache18{% endcache %}'})
@@ -119,8 +125,13 @@ class CacheTagTests(SimpleTestCase):
 
 class CacheTests(SimpleTestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = Engine(libraries={'cache': 'django.templatetags.cache'})
+        super().setUpClass()
+
     def test_cache_regression_20130(self):
-        t = Template('{% load cache %}{% cache 1 regression_20130 %}foo{% endcache %}')
+        t = self.engine.from_string('{% load cache %}{% cache 1 regression_20130 %}foo{% endcache %}')
         cachenode = t.nodelist[1]
         self.assertEqual(cachenode.fragment_name, 'regression_20130')
 
@@ -139,8 +150,8 @@ class CacheTests(SimpleTestCase):
         When a cache called "template_fragments" is present, the cache tag
         will use it in preference to 'default'
         """
-        t1 = Template('{% load cache %}{% cache 1 fragment %}foo{% endcache %}')
-        t2 = Template('{% load cache %}{% cache 1 fragment using="default" %}bar{% endcache %}')
+        t1 = self.engine.from_string('{% load cache %}{% cache 1 fragment %}foo{% endcache %}')
+        t2 = self.engine.from_string('{% load cache %}{% cache 1 fragment using="default" %}bar{% endcache %}')
 
         ctx = Context()
         o1 = t1.render(ctx)
@@ -154,7 +165,7 @@ class CacheTests(SimpleTestCase):
         When a cache that doesn't exist is specified, the cache tag will
         raise a TemplateSyntaxError
         '"""
-        t = Template('{% load cache %}{% cache 1 backend using="unknown" %}bar{% endcache %}')
+        t = self.engine.from_string('{% load cache %}{% cache 1 backend using="unknown" %}bar{% endcache %}')
 
         ctx = Context()
         with self.assertRaises(TemplateSyntaxError):

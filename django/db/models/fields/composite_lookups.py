@@ -103,11 +103,21 @@ class CompositeIn(In):
 
 
 class SubfieldTransform(Transform):
-    def __init__(self, lhs, init_lookups):
-        self.output_field = lhs.target.get_subfield(init_lookups[0])
+
+    def __init__(self, subfield_name, lhs, *args, **kwargs):
+        self.output_field = lhs.target.get_subfield(subfield_name)
         lhs = self.output_field.get_col(lhs.alias)
-        super(SubfieldTransform, self).__init__(lhs, init_lookups)
+        super().__init__(lhs, *args, **kwargs)
 
     def as_sql(self, compiler, connection):
         lhs, params = compiler.compile(self.lhs)
         return '%s' % lhs, params
+
+
+class SubfieldTransformFactory:
+
+    def __init__(self, subfield_name):
+        self.subfield_name = subfield_name
+
+    def __call__(self, *args, **kwargs):
+        return SubfieldTransform(self.subfield_name, *args, **kwargs)

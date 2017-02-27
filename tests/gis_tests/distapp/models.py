@@ -1,17 +1,14 @@
 from django.contrib.gis.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
 from ..utils import gisfield_may_be_null
 
 
-@python_2_unicode_compatible
 class NamedModel(models.Model):
     name = models.CharField(max_length=30)
 
-    objects = models.GeoManager()
-
     class Meta:
         abstract = True
+        required_db_features = ['gis_enabled']
 
     def __str__(self):
         return self.name
@@ -20,6 +17,7 @@ class NamedModel(models.Model):
 class SouthTexasCity(NamedModel):
     "City model on projected coordinate system for South Texas."
     point = models.PointField(srid=32140)
+    radius = models.IntegerField(default=10000)
 
 
 class SouthTexasCityFt(NamedModel):
@@ -30,6 +28,7 @@ class SouthTexasCityFt(NamedModel):
 class AustraliaCity(NamedModel):
     "City model for Australia, using WGS84."
     point = models.PointField()
+    radius = models.IntegerField(default=10000)
 
 
 class CensusZipcode(NamedModel):

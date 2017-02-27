@@ -8,7 +8,7 @@ from django.core import checks
 from django.core.exceptions import FieldDoesNotExist
 from django.db.models.fields import Field
 from django.db.models.fields.composite_lookups import (
-    CompositeExact, CompositeIn, CompositeIsNull, SubfieldTransform,
+    CompositeExact, CompositeIn, CompositeIsNull, SubfieldTransformFactory,
 )
 from django.utils import six
 from django.utils.functional import cached_property
@@ -147,9 +147,9 @@ class CompositeField(six.with_metaclass(CompositeFieldBase, Field)):
     def is_unnamed(self):
         return bool(self._UNNAMED_FIELD_REGEX.match(self.name))
 
-    def contribute_to_class(self, model_cls, name, virtual_only=False):
+    def contribute_to_class(self, model_cls, name, private_only=False):
         super(CompositeField, self).contribute_to_class(
-            model_cls, name, virtual_only=True
+            model_cls, name, private_only=True
         )
         if not self.is_unnamed:
             setattr(model_cls, name, CompositeFieldDescriptor(self))
@@ -173,7 +173,7 @@ class CompositeField(six.with_metaclass(CompositeFieldBase, Field)):
 
     def get_transform(self, lookup_name):
         if lookup_name in self.subfields:
-            return SubfieldTransform
+            return SubfieldTransformFactory(lookup_name)
 
     def value_to_dict(self, value):
         """

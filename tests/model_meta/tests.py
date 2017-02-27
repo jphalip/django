@@ -5,7 +5,7 @@ from django.contrib.contenttypes.fields import (
 from django.core.exceptions import FieldDoesNotExist
 from django.db.models.fields import CharField, Field, related
 from django.db.models.options import EMPTY_RELATION_TREE, IMMUTABLE_WARNING
-from django.test import TestCase
+from django.test import SimpleTestCase
 
 from .models import (
     AbstractPerson, BasePerson, Child, CommonAncestor, FirstParent, Person,
@@ -14,7 +14,7 @@ from .models import (
 from .results import TEST_RESULTS
 
 
-class OptionsBaseTests(TestCase):
+class OptionsBaseTests(SimpleTestCase):
 
     def _map_related_query_names(self, res):
         return tuple((o.name, m) for o, m in res)
@@ -33,8 +33,7 @@ class OptionsBaseTests(TestCase):
             model = None
 
         field = relation if direct else relation.field
-        m2m = isinstance(field, related.ManyToManyField)
-        return relation, model, direct, m2m
+        return relation, model, direct, bool(field.many_to_many)  # many_to_many can be None
 
 
 class GetFieldsTests(OptionsBaseTests):
@@ -49,6 +48,17 @@ class GetFieldsTests(OptionsBaseTests):
                 fields += ["errors"]
 
 
+class LabelTests(OptionsBaseTests):
+
+    def test_label(self):
+        for model, expected_result in TEST_RESULTS['labels'].items():
+            self.assertEqual(model._meta.label, expected_result)
+
+    def test_label_lower(self):
+        for model, expected_result in TEST_RESULTS['lower_labels'].items():
+            self.assertEqual(model._meta.label_lower, expected_result)
+
+
 class DataTests(OptionsBaseTests):
 
     def test_fields(self):
@@ -57,7 +67,8 @@ class DataTests(OptionsBaseTests):
             self.assertEqual([f.attname for f in fields], expected_result)
 
     def test_local_fields(self):
-        is_data_field = lambda f: isinstance(f, Field) and not isinstance(f, related.ManyToManyField)
+        def is_data_field(f):
+            return isinstance(f, Field) and not f.many_to_many
 
         for model, expected_result in TEST_RESULTS['local_fields'].items():
             fields = model._meta.local_fields
@@ -98,7 +109,8 @@ class M2MTests(OptionsBaseTests):
 
 
 class RelatedObjectsTests(OptionsBaseTests):
-    key_name = lambda self, r: r[0]
+    def key_name(self, r):
+        return r[0]
 
     def test_related_objects(self):
         result_key = 'get_all_related_objects_with_model'
@@ -108,7 +120,10 @@ class RelatedObjectsTests(OptionsBaseTests):
                 for field in model._meta.get_fields()
                 if field.auto_created and not field.concrete
             ]
-            self.assertEqual(self._map_related_query_names(objects), expected)
+            self.assertEqual(
+                sorted(self._map_related_query_names(objects), key=self.key_name),
+                sorted(expected, key=self.key_name),
+            )
 
     def test_related_objects_local(self):
         result_key = 'get_all_related_objects_with_model_local'
@@ -118,7 +133,10 @@ class RelatedObjectsTests(OptionsBaseTests):
                 for field in model._meta.get_fields(include_parents=False)
                 if field.auto_created and not field.concrete
             ]
-            self.assertEqual(self._map_related_query_names(objects), expected)
+            self.assertEqual(
+                sorted(self._map_related_query_names(objects), key=self.key_name),
+                sorted(expected, key=self.key_name),
+            )
 
     def test_related_objects_include_hidden(self):
         result_key = 'get_all_related_objects_with_model_hidden'
@@ -147,11 +165,11 @@ class RelatedObjectsTests(OptionsBaseTests):
             )
 
 
-class VirtualFieldsTests(OptionsBaseTests):
+class PrivateFieldsTests(OptionsBaseTests):
 
-    def test_virtual_fields(self):
-        for model, expected_names in TEST_RESULTS['virtual_fields'].items():
-            objects = model._meta.virtual_fields
+    def test_private_fields(self):
+        for model, expected_names in TEST_RESULTS['private_fields'].items():
+            objects = model._meta.private_fields
             self.assertEqual(sorted([f.name for f in objects]), sorted(expected_names))
 
 
@@ -202,7 +220,7 @@ class GetFieldByNameTests(OptionsBaseTests):
             opts.apps.models_ready = True
 
 
-class RelationTreeTests(TestCase):
+class RelationTreeTests(SimpleTestCase):
     all_models = (Relation, AbstractPerson, BasePerson, Person, ProxyPerson, Relating)
 
     def setUp(self):
@@ -245,19 +263,18 @@ class RelationTreeTests(TestCase):
         self.assertEqual(
             sorted([field.related_query_name() for field in BasePerson._meta._relation_tree]),
             sorted([
-                '+', '_basepeople_hidden_+', 'BasePerson_following_abstract+', 'BasePerson_following_abstract+',
-                'BasePerson_following_base+', 'BasePerson_following_base+', 'BasePerson_friends_abstract+',
-                'BasePerson_friends_abstract+', 'BasePerson_friends_base+', 'BasePerson_friends_base+',
-                'BasePerson_m2m_abstract+', 'BasePerson_m2m_base+', 'Relating_basepeople+',
-                'Relating_basepeople_hidden+', 'followers_abstract',
-                'followers_base', 'friends_abstract_rel_+', 'friends_base_rel_+',
-                'person', 'relating_basepeople', 'relating_baseperson',
+                '+', '_relating_basepeople_hidden_+', 'BasePerson_following_abstract+',
+                'BasePerson_following_abstract+', 'BasePerson_following_base+', 'BasePerson_following_base+',
+                'BasePerson_friends_abstract+', 'BasePerson_friends_abstract+', 'BasePerson_friends_base+',
+                'BasePerson_friends_base+', 'BasePerson_m2m_abstract+', 'BasePerson_m2m_base+', 'Relating_basepeople+',
+                'Relating_basepeople_hidden+', 'followers_abstract', 'followers_base', 'friends_abstract_rel_+',
+                'friends_base_rel_+', 'person', 'relating_basepeople', 'relating_baseperson',
             ])
         )
         self.assertEqual([field.related_query_name() for field in AbstractPerson._meta._relation_tree], [])
 
 
-class ParentListTests(TestCase):
+class ParentListTests(SimpleTestCase):
     def test_get_parent_list(self):
         self.assertEqual(CommonAncestor._meta.get_parent_list(), [])
         self.assertEqual(FirstParent._meta.get_parent_list(), [CommonAncestor])

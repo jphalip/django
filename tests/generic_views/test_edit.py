@@ -1,22 +1,17 @@
-from __future__ import unicode_literals
-
-import warnings
-
 from django import forms
 from django.core.exceptions import ImproperlyConfigured
-from django.core.urlresolvers import reverse
-from django.test import TestCase, ignore_warnings, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.test.client import RequestFactory
-from django.utils.deprecation import RemovedInDjango20Warning
+from django.urls import reverse
 from django.views.generic.base import View
 from django.views.generic.edit import CreateView, FormMixin, ModelFormMixin
 
 from . import views
+from .forms import AuthorForm
 from .models import Artist, Author
-from .test_forms import AuthorForm
 
 
-class FormMixinTests(TestCase):
+class FormMixinTests(SimpleTestCase):
     def test_initial_data(self):
         """ Test instance independence of initial data dict (see #16138) """
         initial_1 = FormMixin().get_initial()
@@ -35,7 +30,7 @@ class FormMixinTests(TestCase):
             request = get_request
 
         default_kwargs = TestFormMixin().get_form_kwargs()
-        self.assertEqual(None, default_kwargs.get('prefix'))
+        self.assertIsNone(default_kwargs.get('prefix'))
 
         set_mixin = TestFormMixin()
         set_mixin.prefix = test_string
@@ -59,27 +54,12 @@ class FormMixinTests(TestCase):
             'get_form() should fallback to get_form_class() if none is provided.'
         )
 
-    def test_get_form_missing_form_class_default_value(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.filterwarnings('always')
+    def test_get_context_data(self):
+        class FormContext(FormMixin):
+            request = RequestFactory().get('/')
+            form_class = forms.Form
 
-            class MissingDefaultValue(FormMixin):
-                request = RequestFactory().get('/')
-                form_class = forms.Form
-
-                def get_form(self, form_class):
-                    return form_class(**self.get_form_kwargs())
-        self.assertEqual(len(w), 1)
-        self.assertEqual(w[0].category, RemovedInDjango20Warning)
-        self.assertEqual(
-            str(w[0].message),
-            '`generic_views.test_edit.MissingDefaultValue.get_form` method '
-            'must define a default value for its `form_class` argument.'
-        )
-
-        self.assertIsInstance(
-            MissingDefaultValue().get_form(), forms.Form,
-        )
+        self.assertIsInstance(FormContext().get_context_data()['form'], forms.Form)
 
 
 @override_settings(ROOT_URLCONF='generic_views.urls')
@@ -89,8 +69,15 @@ class BasicFormTests(TestCase):
         res = self.client.post('/contact/', {'name': "Me", 'message': "Hello"})
         self.assertRedirects(res, '/list/authors/')
 
+    def test_late_form_validation(self):
+        """
+        A form can be marked invalid in the form_valid() method (#25548).
+        """
+        res = self.client.post('/late-validation/', {'name': "Me", 'message': "Hello"})
+        self.assertFalse(res.context['form'].is_valid())
 
-class ModelFormMixinTests(TestCase):
+
+class ModelFormMixinTests(SimpleTestCase):
     def test_get_form(self):
         form_class = views.AuthorGetQuerySetFormView().get_form_class()
         self.assertEqual(form_class._meta.model, Author)
@@ -114,36 +101,31 @@ class CreateViewTests(TestCase):
         self.assertNotIn('author', res.context)
         self.assertTemplateUsed(res, 'generic_views/author_form.html')
 
-        res = self.client.post('/edit/authors/create/',
-                        {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
+        res = self.client.post('/edit/authors/create/', {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/list/authors/')
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe>'])
 
     def test_create_invalid(self):
-        res = self.client.post('/edit/authors/create/',
-                        {'name': 'A' * 101, 'slug': 'randall-munroe'})
+        res = self.client.post('/edit/authors/create/', {'name': 'A' * 101, 'slug': 'randall-munroe'})
         self.assertEqual(res.status_code, 200)
         self.assertTemplateUsed(res, 'generic_views/author_form.html')
         self.assertEqual(len(res.context['form'].errors), 1)
         self.assertEqual(Author.objects.count(), 0)
 
     def test_create_with_object_url(self):
-        res = self.client.post('/edit/artists/create/',
-                        {'name': 'Rene Magritte'})
+        res = self.client.post('/edit/artists/create/', {'name': 'Rene Magritte'})
         self.assertEqual(res.status_code, 302)
         artist = Artist.objects.get(name='Rene Magritte')
         self.assertRedirects(res, '/detail/artist/%d/' % artist.pk)
         self.assertQuerysetEqual(Artist.objects.all(), ['<Artist: Rene Magritte>'])
 
     def test_create_with_redirect(self):
-        res = self.client.post('/edit/authors/create/redirect/',
-                            {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
+        res = self.client.post('/edit/authors/create/redirect/', {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/edit/authors/create/')
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe>'])
 
-    @ignore_warnings(category=RemovedInDjango20Warning)
     def test_create_with_interpolated_redirect(self):
         res = self.client.post(
             '/edit/authors/create/interpolate_redirect/',
@@ -170,24 +152,21 @@ class CreateViewTests(TestCase):
         self.assertNotIn('author', res.context)
         self.assertTemplateUsed(res, 'generic_views/form.html')
 
-        res = self.client.post('/edit/authors/create/special/',
-                            {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
+        res = self.client.post('/edit/authors/create/special/', {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
         self.assertEqual(res.status_code, 302)
         obj = Author.objects.get(slug='randall-munroe')
         self.assertRedirects(res, reverse('author_detail', kwargs={'pk': obj.pk}))
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe>'])
 
     def test_create_without_redirect(self):
-        try:
-            self.client.post('/edit/authors/create/naive/',
-                {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
-            self.fail('Should raise exception -- No redirect URL provided, and no get_absolute_url provided')
-        except ImproperlyConfigured:
-            pass
+        with self.assertRaises(ImproperlyConfigured):
+            self.client.post('/edit/authors/create/naive/', {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
 
     def test_create_restricted(self):
-        res = self.client.post('/edit/authors/create/restricted/',
-            {'name': 'Randall Munroe', 'slug': 'randall-munroe'})
+        res = self.client.post(
+            '/edit/authors/create/restricted/',
+            {'name': 'Randall Munroe', 'slug': 'randall-munroe'}
+        )
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/accounts/login/?next=/edit/authors/create/restricted/')
 
@@ -197,16 +176,14 @@ class CreateViewTests(TestCase):
             model = Author
             fields = ['name']
 
-        self.assertEqual(list(MyCreateView().get_form_class().base_fields),
-                         ['name'])
+        self.assertEqual(list(MyCreateView().get_form_class().base_fields), ['name'])
 
     def test_create_view_all_fields(self):
         class MyCreateView(CreateView):
             model = Author
             fields = '__all__'
 
-        self.assertEqual(list(MyCreateView().get_form_class().base_fields),
-                         ['name', 'slug'])
+        self.assertEqual(list(MyCreateView().get_form_class().base_fields), ['name', 'slug'])
 
     def test_create_view_without_explicit_fields(self):
         class MyCreateView(CreateView):
@@ -244,10 +221,13 @@ class UpdateViewTests(TestCase):
         self.assertEqual(res.context['object'], Author.objects.get(pk=a.pk))
         self.assertEqual(res.context['author'], Author.objects.get(pk=a.pk))
         self.assertTemplateUsed(res, 'generic_views/author_form.html')
+        self.assertEqual(res.context['view'].get_form_called_count, 1)
 
         # Modification with both POST and PUT (browser compatible)
-        res = self.client.post('/edit/author/%d/update/' % a.pk,
-                        {'name': 'Randall Munroe (xkcd)', 'slug': 'randall-munroe'})
+        res = self.client.post(
+            '/edit/author/%d/update/' % a.pk,
+            {'name': 'Randall Munroe (xkcd)', 'slug': 'randall-munroe'}
+        )
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/list/authors/')
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe (xkcd)>'])
@@ -257,17 +237,16 @@ class UpdateViewTests(TestCase):
             name='Randall Munroe',
             slug='randall-munroe',
         )
-        res = self.client.post('/edit/author/%d/update/' % a.pk,
-                        {'name': 'A' * 101, 'slug': 'randall-munroe'})
+        res = self.client.post('/edit/author/%d/update/' % a.pk, {'name': 'A' * 101, 'slug': 'randall-munroe'})
         self.assertEqual(res.status_code, 200)
         self.assertTemplateUsed(res, 'generic_views/author_form.html')
         self.assertEqual(len(res.context['form'].errors), 1)
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe>'])
+        self.assertEqual(res.context['view'].get_form_called_count, 1)
 
     def test_update_with_object_url(self):
         a = Artist.objects.create(name='Rene Magritte')
-        res = self.client.post('/edit/artists/%d/update/' % a.pk,
-                        {'name': 'Rene Magritte'})
+        res = self.client.post('/edit/artists/%d/update/' % a.pk, {'name': 'Rene Magritte'})
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/detail/artist/%d/' % a.pk)
         self.assertQuerysetEqual(Artist.objects.all(), ['<Artist: Rene Magritte>'])
@@ -277,13 +256,14 @@ class UpdateViewTests(TestCase):
             name='Randall Munroe',
             slug='randall-munroe',
         )
-        res = self.client.post('/edit/author/%d/update/redirect/' % a.pk,
-                        {'name': 'Randall Munroe (author of xkcd)', 'slug': 'randall-munroe'})
+        res = self.client.post(
+            '/edit/author/%d/update/redirect/' % a.pk,
+            {'name': 'Randall Munroe (author of xkcd)', 'slug': 'randall-munroe'}
+        )
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/edit/authors/create/')
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe (author of xkcd)>'])
 
-    @ignore_warnings(category=RemovedInDjango20Warning)
     def test_update_with_interpolated_redirect(self):
         a = Author.objects.create(
             name='Randall Munroe',
@@ -319,8 +299,10 @@ class UpdateViewTests(TestCase):
         self.assertNotIn('author', res.context)
         self.assertTemplateUsed(res, 'generic_views/form.html')
 
-        res = self.client.post('/edit/author/%d/update/special/' % a.pk,
-                        {'name': 'Randall Munroe (author of xkcd)', 'slug': 'randall-munroe'})
+        res = self.client.post(
+            '/edit/author/%d/update/special/' % a.pk,
+            {'name': 'Randall Munroe (author of xkcd)', 'slug': 'randall-munroe'}
+        )
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/detail/author/%d/' % a.pk)
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe (author of xkcd)>'])
@@ -333,8 +315,10 @@ class UpdateViewTests(TestCase):
         # Should raise exception -- No redirect URL provided, and no
         # get_absolute_url provided
         with self.assertRaises(ImproperlyConfigured):
-            self.client.post('/edit/author/%d/update/naive/' % a.pk,
-                            {'name': 'Randall Munroe (author of xkcd)', 'slug': 'randall-munroe'})
+            self.client.post(
+                '/edit/author/%d/update/naive/' % a.pk,
+                {'name': 'Randall Munroe (author of xkcd)', 'slug': 'randall-munroe'}
+            )
 
     def test_update_get_object(self):
         a = Author.objects.create(
@@ -351,8 +335,7 @@ class UpdateViewTests(TestCase):
         self.assertTemplateUsed(res, 'generic_views/author_form.html')
 
         # Modification with both POST and PUT (browser compatible)
-        res = self.client.post('/edit/author/update/',
-                        {'name': 'Randall Munroe (xkcd)', 'slug': 'randall-munroe'})
+        res = self.client.post('/edit/author/update/', {'name': 'Randall Munroe (xkcd)', 'slug': 'randall-munroe'})
         self.assertEqual(res.status_code, 302)
         self.assertRedirects(res, '/list/authors/')
         self.assertQuerysetEqual(Author.objects.all(), ['<Author: Randall Munroe (xkcd)>'])
@@ -390,7 +373,6 @@ class DeleteViewTests(TestCase):
         self.assertRedirects(res, '/edit/authors/create/')
         self.assertQuerysetEqual(Author.objects.all(), [])
 
-    @ignore_warnings(category=RemovedInDjango20Warning)
     def test_delete_with_interpolated_redirect(self):
         a = Author.objects.create(**{'name': 'Randall Munroe', 'slug': 'randall-munroe'})
         res = self.client.post('/edit/author/%d/delete/interpolate_redirect/' % a.pk)

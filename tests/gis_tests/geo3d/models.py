@@ -1,15 +1,12 @@
 from django.contrib.gis.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
 
-@python_2_unicode_compatible
 class NamedModel(models.Model):
     name = models.CharField(max_length=30)
 
-    objects = models.GeoManager()
-
     class Meta:
         abstract = True
+        required_db_features = ['gis_enabled']
 
     def __str__(self):
         return self.name
@@ -17,6 +14,7 @@ class NamedModel(models.Model):
 
 class City3D(NamedModel):
     point = models.PointField(dim=3)
+    pointg = models.PointField(dim=3, geography=True)
 
 
 class Interstate2D(NamedModel):
@@ -45,10 +43,9 @@ class Polygon3D(NamedModel):
 
 class SimpleModel(models.Model):
 
-    objects = models.GeoManager()
-
     class Meta:
         abstract = True
+        required_db_features = ['gis_enabled']
 
 
 class Point2D(SimpleModel):

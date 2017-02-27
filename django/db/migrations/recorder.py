@@ -1,12 +1,12 @@
-from __future__ import unicode_literals
-
 from django.apps.registry import Apps
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
+from django.db.utils import DatabaseError
 from django.utils.timezone import now
 
+from .exceptions import MigrationSchemaMissing
 
-class MigrationRecorder(object):
+
+class MigrationRecorder:
     """
     Deals with storing migration records in the database.
 
@@ -19,7 +19,6 @@ class MigrationRecorder(object):
     a row in the table always means a migration is applied.
     """
 
-    @python_2_unicode_compatible
     class Migration(models.Model):
         app = models.CharField(max_length=255)
         name = models.CharField(max_length=255)
@@ -49,8 +48,11 @@ class MigrationRecorder(object):
         if self.Migration._meta.db_table in self.connection.introspection.table_names(self.connection.cursor()):
             return
         # Make the table
-        with self.connection.schema_editor() as editor:
-            editor.create_model(self.Migration)
+        try:
+            with self.connection.schema_editor() as editor:
+                editor.create_model(self.Migration)
+        except DatabaseError as exc:
+            raise MigrationSchemaMissing("Unable to create the django_migrations table (%s)" % exc)
 
     def applied_migrations(self):
         """

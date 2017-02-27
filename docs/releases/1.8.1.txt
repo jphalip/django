@@ -2,9 +2,10 @@
 Django 1.8.1 release notes
 ==========================
 
-*Under development*
+*May 1, 2015*
 
-Django 1.8.1 fixes several bugs in 1.8.
+Django 1.8.1 fixes several bugs in 1.8 and includes some optimizations in the
+migrations framework.
 
 Bugfixes
 ========
@@ -55,3 +56,42 @@ Bugfixes
   ``qs.annotate(foo=F('field')).values('pk').order_by('foo'))`` (:ticket:`24615`).
 
 * Fixed a database table name quoting regression (:ticket:`24605`).
+
+* Prevented the loss of ``null``/``not null`` column properties during field
+  alteration of MySQL databases (:ticket:`24595`).
+
+* Fixed JavaScript path of ``contrib.admin``’s related field widget when using
+  alternate static file storages (:ticket:`24655`).
+
+* Fixed a migration crash when adding new relations to models
+  (:ticket:`24573`).
+
+* Fixed a migration crash when applying migrations with model managers on
+  Python 3 that were generated on Python 2 (:ticket:`24701`).
+
+* Restored the ability to use iterators as queryset filter arguments
+  (:ticket:`24719`).
+
+* Fixed a migration crash when renaming the target model of a many-to-many
+  relation (:ticket:`24725`).
+
+* Removed flushing of the test database with :option:`test --keepdb`, which
+  prevented apps with data migrations from using the option (:ticket:`24729`).
+
+* Fixed ``makemessages`` crash in some locales (:ticket:`23271`).
+
+* Fixed help text positioning of ``contrib.admin`` fields that use the
+  ``ModelAdmin.filter_horizontal`` and ``filter_vertical`` options
+  (:ticket:`24676`).
+
+* Fixed `AttributeError: function 'GDALAllRegister' not found` error when
+  initializing ``contrib.gis`` on Windows.
+
+Optimizations
+=============
+
+* Changed ``ModelState`` to deepcopy fields instead of deconstructing and
+  reconstructing (:ticket:`24591`). This speeds up the rendering of model
+  states and reduces memory usage when running :djadmin:`manage.py migrate
+  <migrate>` (although other changes in this release may negate any performance
+  benefits).

@@ -1,9 +1,7 @@
-from __future__ import unicode_literals
-
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.http import Http404
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from django.views.generic.base import ContextMixin, TemplateResponseMixin, View
 
 
@@ -32,8 +30,8 @@ class SingleObjectMixin(ContextMixin):
             queryset = self.get_queryset()
 
         # Next, try looking up by primary key.
-        pk = self.kwargs.get(self.pk_url_kwarg, None)
-        slug = self.kwargs.get(self.slug_url_kwarg, None)
+        pk = self.kwargs.get(self.pk_url_kwarg)
+        slug = self.kwargs.get(self.slug_url_kwarg)
         if pk is not None:
             queryset = queryset.filter(pk=pk)
 
@@ -104,7 +102,7 @@ class SingleObjectMixin(ContextMixin):
             if context_object_name:
                 context[context_object_name] = self.object
         context.update(kwargs)
-        return super(SingleObjectMixin, self).get_context_data(**context)
+        return super().get_context_data(**context)
 
 
 class BaseDetailView(SingleObjectMixin, View):
@@ -132,7 +130,7 @@ class SingleObjectTemplateResponseMixin(TemplateResponseMixin):
         * ``<app_label>/<model_name><template_name_suffix>.html``
         """
         try:
-            names = super(SingleObjectTemplateResponseMixin, self).get_template_names()
+            names = super().get_template_names()
         except ImproperlyConfigured:
             # If template_name isn't specified, it's not a problem --
             # we just start with an empty list.
@@ -149,9 +147,10 @@ class SingleObjectTemplateResponseMixin(TemplateResponseMixin):
             # The least-specific option is the default <app>/<model>_detail.html;
             # only use this if the object in question is a model.
             if isinstance(self.object, models.Model):
+                object_meta = self.object._meta
                 names.append("%s/%s%s.html" % (
-                    self.object._meta.app_label,
-                    self.object._meta.model_name,
+                    object_meta.app_label,
+                    object_meta.model_name,
                     self.template_name_suffix
                 ))
             elif hasattr(self, 'model') and self.model is not None and issubclass(self.model, models.Model):

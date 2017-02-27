@@ -1,7 +1,7 @@
 """
 Tests for Django's bundled context processors.
 """
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 
 @override_settings(
@@ -16,14 +16,14 @@ from django.test import TestCase, override_settings
         },
     }],
 )
-class RequestContextProcessorTests(TestCase):
+class RequestContextProcessorTests(SimpleTestCase):
     """
     Tests for the ``django.template.context_processors.request`` processor.
     """
 
     def test_request_attributes(self):
         """
-        Test that the request object is available in the template and that its
+        The request object is available in the template and that its
         attributes can't be overridden by GET and POST parameters (#3828).
         """
         url = '/request_attrs/'
@@ -64,6 +64,7 @@ class DebugContextProcessorTests(TestCase):
     """
     Tests for the ``django.template.context_processors.debug`` processor.
     """
+    multi_db = True
 
     def test_debug(self):
         url = '/debug/'
@@ -87,3 +88,5 @@ class DebugContextProcessorTests(TestCase):
         self.assertContains(response, 'Second query list: 1')
         # Check we have not actually memoized connection.queries
         self.assertContains(response, 'Third query list: 2')
+        # Check queries for DB connection 'other'
+        self.assertContains(response, 'Fourth query list: 3')

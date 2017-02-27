@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 from django.contrib import admin
 from django.contrib.admin.options import ModelAdmin
 from django.contrib.auth.models import User
@@ -11,19 +9,22 @@ from .models import (
 )
 
 
-class MockRequest(object):
+class MockRequest:
     pass
 
 
-class MockSuperUser(object):
+class MockSuperUser:
     def has_perm(self, perm):
         return True
 
     def has_module_perms(self, module):
         return True
 
+
 request = MockRequest()
 request.user = MockSuperUser()
+
+site = admin.AdminSite()
 
 
 class TestAdminOrdering(TestCase):
@@ -46,7 +47,7 @@ class TestAdminOrdering(TestCase):
         The default ordering should be by name, as specified in the inner Meta
         class.
         """
-        ma = ModelAdmin(Band, admin.site)
+        ma = ModelAdmin(Band, site)
         names = [b.name for b in ma.get_queryset(request)]
         self.assertListEqual(['Aerosmith', 'Radiohead', 'Van Halen'], names)
 
@@ -57,7 +58,7 @@ class TestAdminOrdering(TestCase):
         """
         class BandAdmin(ModelAdmin):
             ordering = ('rank',)  # default ordering is ('name',)
-        ma = BandAdmin(Band, admin.site)
+        ma = BandAdmin(Band, site)
         names = [b.name for b in ma.get_queryset(request)]
         self.assertListEqual(['Radiohead', 'Van Halen', 'Aerosmith'], names)
 
@@ -69,7 +70,7 @@ class TestAdminOrdering(TestCase):
         other_user = User.objects.create(username='other')
         request = self.request_factory.get('/')
         request.user = super_user
-        ma = DynOrderingBandAdmin(Band, admin.site)
+        ma = DynOrderingBandAdmin(Band, site)
         names = [b.name for b in ma.get_queryset(request)]
         self.assertListEqual(['Radiohead', 'Van Halen', 'Aerosmith'], names)
         request.user = other_user
@@ -96,7 +97,7 @@ class TestInlineModelAdminOrdering(TestCase):
         The default ordering should be by name, as specified in the inner Meta
         class.
         """
-        inline = SongInlineDefaultOrdering(self.band, admin.site)
+        inline = SongInlineDefaultOrdering(self.band, site)
         names = [s.name for s in inline.get_queryset(request)]
         self.assertListEqual(['Dude (Looks Like a Lady)', 'Jaded', 'Pink'], names)
 
@@ -104,7 +105,7 @@ class TestInlineModelAdminOrdering(TestCase):
         """
         Let's check with ordering set to something different than the default.
         """
-        inline = SongInlineNewOrdering(self.band, admin.site)
+        inline = SongInlineNewOrdering(self.band, site)
         names = [s.name for s in inline.get_queryset(request)]
         self.assertListEqual(['Jaded', 'Pink', 'Dude (Looks Like a Lady)'], names)
 
@@ -119,16 +120,16 @@ class TestRelatedFieldsAdminOrdering(TestCase):
         # for the related model
         class SongAdmin(admin.ModelAdmin):
             pass
-        admin.site.register(Song, SongAdmin)
+        site.register(Song, SongAdmin)
 
     def tearDown(self):
-        admin.site.unregister(Song)
-        if Band in admin.site._registry:
-            admin.site.unregister(Band)
+        site.unregister(Song)
+        if Band in site._registry:
+            site.unregister(Band)
 
     def check_ordering_of_field_choices(self, correct_ordering):
-        fk_field = admin.site._registry[Song].formfield_for_foreignkey(Song.band.field)
-        m2m_field = admin.site._registry[Song].formfield_for_manytomany(Song.other_interpreters.field)
+        fk_field = site._registry[Song].formfield_for_foreignkey(Song.band.field, request=None)
+        m2m_field = site._registry[Song].formfield_for_manytomany(Song.other_interpreters.field, request=None)
 
         self.assertListEqual(list(fk_field.queryset), correct_ordering)
         self.assertListEqual(list(m2m_field.queryset), correct_ordering)
@@ -140,7 +141,7 @@ class TestRelatedFieldsAdminOrdering(TestCase):
     def test_admin_with_no_ordering_fallback_to_model_ordering(self):
         class NoOrderingBandAdmin(admin.ModelAdmin):
             pass
-        admin.site.register(Band, NoOrderingBandAdmin)
+        site.register(Band, NoOrderingBandAdmin)
 
         # should be ordered by name (as defined by the model)
         self.check_ordering_of_field_choices([self.b2, self.b1])
@@ -148,30 +149,30 @@ class TestRelatedFieldsAdminOrdering(TestCase):
     def test_admin_ordering_beats_model_ordering(self):
         class StaticOrderingBandAdmin(admin.ModelAdmin):
             ordering = ('rank',)
-        admin.site.register(Band, StaticOrderingBandAdmin)
+        site.register(Band, StaticOrderingBandAdmin)
 
         # should be ordered by rank (defined by the ModelAdmin)
         self.check_ordering_of_field_choices([self.b1, self.b2])
 
     def test_custom_queryset_still_wins(self):
-        """Test that custom queryset has still precedence (#21405)"""
+        """Custom queryset has still precedence (#21405)"""
         class SongAdmin(admin.ModelAdmin):
             # Exclude one of the two Bands from the querysets
-            def formfield_for_foreignkey(self, db_field, **kwargs):
+            def formfield_for_foreignkey(self, db_field, request, **kwargs):
                 if db_field.name == 'band':
                     kwargs["queryset"] = Band.objects.filter(rank__gt=2)
-                return super(SongAdmin, self).formfield_for_foreignkey(db_field, **kwargs)
+                return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-            def formfield_for_manytomany(self, db_field, **kwargs):
+            def formfield_for_manytomany(self, db_field, request, **kwargs):
                 if db_field.name == 'other_interpreters':
                     kwargs["queryset"] = Band.objects.filter(rank__gt=2)
-                return super(SongAdmin, self).formfield_for_foreignkey(db_field, **kwargs)
+                return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
         class StaticOrderingBandAdmin(admin.ModelAdmin):
             ordering = ('rank',)
 
-        admin.site.unregister(Song)
-        admin.site.register(Song, SongAdmin)
-        admin.site.register(Band, StaticOrderingBandAdmin)
+        site.unregister(Song)
+        site.register(Song, SongAdmin)
+        site.register(Band, StaticOrderingBandAdmin)
 
         self.check_ordering_of_field_choices([self.b2])

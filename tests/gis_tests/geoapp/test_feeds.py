@@ -1,16 +1,12 @@
-from __future__ import unicode_literals
-
 from xml.dom import minidom
 
 from django.conf import settings
-from django.contrib.gis.geos import HAS_GEOS
 from django.contrib.sites.models import Site
 from django.test import (
     TestCase, modify_settings, override_settings, skipUnlessDBFeature,
 )
 
-if HAS_GEOS:
-    from .models import City
+from .models import City
 
 
 @modify_settings(INSTALLED_APPS={'append': 'django.contrib.sites'})
@@ -88,5 +84,7 @@ class GeoFeedTest(TestCase):
             self.assertChildNodes(item, ['title', 'link', 'description', 'guid', 'geo:lat', 'geo:lon'])
 
         # Boxes and Polygons aren't allowed in W3C Geo feeds.
-        self.assertRaises(ValueError, self.client.get, '/feeds/w3cgeo2/')  # Box in <channel>
-        self.assertRaises(ValueError, self.client.get, '/feeds/w3cgeo3/')  # Polygons in <entry>
+        with self.assertRaises(ValueError):  # Box in <channel>
+            self.client.get('/feeds/w3cgeo2/')
+        with self.assertRaises(ValueError):  # Polygons in <entry>
+            self.client.get('/feeds/w3cgeo3/')
